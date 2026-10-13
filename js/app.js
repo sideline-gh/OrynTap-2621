@@ -1,7 +1,3 @@
-// =====================================================================
-// OrynTap — user interface
-// Hash routes: #/home  #/map  #/favourites  #/profile  #/checkin/<spaceId>
-// =====================================================================
 (function () {
   "use strict";
 
@@ -13,7 +9,6 @@
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} },
   };
 
-  // ---------------- icons ----------------
   const I = {
     homeLine: '<svg class="i-line" viewBox="0 0 40 40" aria-hidden="true"><path d="M7 17.5 20 7l13 10.5V33a1.5 1.5 0 0 1-1.5 1.5H8.5A1.5 1.5 0 0 1 7 33z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M16.5 34.5V25a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v9.5" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>',
     homeFill: '<svg class="i-fill" viewBox="0 0 40 40" aria-hidden="true"><path d="M7 17.5 20 7l13 10.5V33a1.5 1.5 0 0 1-1.5 1.5H24V25.5a1.5 1.5 0 0 0-1.5-1.5h-5a1.5 1.5 0 0 0-1.5 1.5v9H8.5A1.5 1.5 0 0 1 7 33z" fill="currentColor"/></svg>',
@@ -29,8 +24,7 @@
   };
   const heartIcon = (on) => on ? I.heartFill.replace('class="i-fill"', "") : I.heartLine.replace('class="i-line"', "");
 
-  // ---------------- time & status ----------------
-  const TZ_OFFSET = 5 * HOUR; // Astana, UTC+5 (all of Kazakhstan since March 2024)
+  const TZ_OFFSET = 5 * HOUR; 
   const DAYS = ["", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
   function astana(now = Date.now()) {
     const d = new Date(now + TZ_OFFSET);
@@ -39,7 +33,6 @@
   const toMin = (t) => { const [h, m] = String(t).split(":").map(Number); return h * 60 + m; };
   const hhmm = (t) => (t === "24:00" ? "00:00" : String(t).slice(0, 5));
 
-  // Returns {state: open|soon|closed, label, detail}
   function statusOf(space, now = Date.now()) {
     const hours = space.hours || [];
     const { wd, min } = astana(now);
@@ -75,7 +68,6 @@
 
   window.App = { statusOf };
 
-  // ---------------- state ----------------
   const state = {
     store: null, unis: [], uniId: LS.get("oryntap.uni", null),
     spaces: [], favSpaces: [], session: null, active: null, favs: new Set(),
@@ -86,7 +78,6 @@
   const isAdmin = () => state.session && state.session.profile.role === "admin";
   const uni = () => state.unis.find(u => u.id === state.uniId);
 
-  // ---------------- toasts ----------------
   function toast(msg, err) {
     const t = document.createElement("div");
     t.className = "toast" + (err ? " err" : ""); t.textContent = msg;
@@ -95,7 +86,6 @@
   }
   const fail = (e) => { console.error(e); toast(e && e.message ? e.message : "Something went wrong", true); };
 
-  // ---------------- theme ----------------
   function paintTheme() {
     const dark = document.documentElement.getAttribute("data-theme") === "dark";
     $("#themeKnob").innerHTML = dark ? I.moon : I.sun;
@@ -109,7 +99,6 @@
     paintTheme();
   });
 
-  // ---------------- university picker ----------------
   function paintUniPicker() {
     const u = uni();
     $("#uniLabel").innerHTML = u ? `<span class="full">${esc(u.name)}</span><span class="short-only">${esc(u.short)}</span>` : "Choose university";
@@ -132,7 +121,6 @@
     await refresh();
   }
 
-  // ---------------- navigation ----------------
   function navItems() {
     const items = [
       { r: "home", label: "Home", line: I.homeLine, fill: I.homeFill },
@@ -150,7 +138,6 @@
     $("#tabbar").style.setProperty("--tabs", items.length);
   }
 
-  // ---------------- data ----------------
   const cacheKey = () => "oryntap.cache." + state.uniId;
   async function refresh() {
     const st = state.store;
@@ -180,7 +167,6 @@
     render();
   }
 
-  // ---------------- views ----------------
   function render() {
     paintNav();
     const v = $("#view");
@@ -418,7 +404,6 @@
     if (state.store.pendingError) { toast(state.store.pendingError, true); state.store.pendingError = null; }
   }
 
-  // ---------------- actions ----------------
   function requireLogin(msg) {
     if (state.session) return true;
     toast(msg || "Please log in first.");
@@ -476,7 +461,6 @@
     } catch (e) { on ? state.favs.delete(id) : state.favs.add(id); render(); fail(e); }
   }
 
-  // ---------------- modals ----------------
   function openModal(html, onMount) {
     const root = $("#modalRoot");
     const last = document.activeElement;
@@ -611,7 +595,6 @@
     try { if ("Notification" in window && Notification.permission === "granted") new Notification("OrynTap", { body: text }); } catch (e) {}
   }
 
-  // ---------------- global click handling ----------------
   document.addEventListener("click", (e) => {
     const chip = e.target.closest("[data-filter]");
     if (chip) {
@@ -642,7 +625,6 @@
     }
   });
 
-  // ---------------- router ----------------
   async function route() {
     $("#modalRoot").innerHTML = "";
     const parts = location.hash.replace(/^#\/?/, "").split("/");
@@ -671,7 +653,6 @@
   }
   addEventListener("hashchange", route);
 
-  // ---------------- timers ----------------
   setInterval(() => {
     document.querySelectorAll("[data-until]").forEach(el => {
       const left = Date.parse(el.dataset.until) - Date.now();
@@ -693,7 +674,6 @@
   addEventListener("online", refresh);
   addEventListener("offline", () => { state.offlineSince = Date.now(); render(); });
 
-  // ---------------- boot ----------------
   (async function boot() {
     paintTheme();
     try {

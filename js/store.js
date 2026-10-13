@@ -1,17 +1,8 @@
-// =====================================================================
-// OrynTap data layer.
-// Two implementations with the SAME interface:
-//   SupabaseStore – real PostgreSQL database (Supabase), used when
-//                   js/config.js contains a URL and anon key.
-//   DemoStore     – keeps everything in localStorage so the site works
-//                   on GitHub Pages before the database is connected.
-// =====================================================================
 (function () {
   "use strict";
 
   const HOUR = 3600e3, MIN = 60e3;
 
-  // ---------- shared helpers ----------
   function domainOf(email) {
     return String(email || "").trim().toLowerCase().split("@")[1] || "";
   }
@@ -29,9 +20,6 @@
     return String(s || "").replace(/[<>]/g, "").trim().slice(0, 50);
   }
 
-  // =================================================================
-  // Supabase (PostgreSQL)
-  // =================================================================
   class SupabaseStore {
     constructor(url, key) {
       this.mode = "supabase";
@@ -41,8 +29,6 @@
       this.unis = [];
     }
     async init() {
-      // An OAuth error (e.g. Google account outside the university domain)
-      // comes back in the URL.
       const params = new URLSearchParams(location.hash.replace(/^#/, "") + "&" + location.search.replace(/^\?/, ""));
       const err = params.get("error_description");
       if (err) {
@@ -163,7 +149,6 @@
       return data;
     }
     subscribe(onChange) {
-      // R4 / R9: every check-in or leave bumps space_activity -> all browsers refresh
       this.sb.channel("oryntap-live")
         .on("postgres_changes", { event: "*", schema: "public", table: "space_activity" }, onChange)
         .on("postgres_changes", { event: "*", schema: "public", table: "study_spaces" }, onChange)
@@ -172,10 +157,6 @@
     }
   }
 
-  // =================================================================
-  // Demo mode (localStorage) — simulates other students so the cards
-  // look alive, and hashes passwords with PBKDF2 even here.
-  // =================================================================
   const KEY = "oryntap.demo.v1", SKEY = "oryntap.demo.session";
 
   async function hashPassword(password, salt) {
@@ -190,7 +171,6 @@
   }
   const uid = () => (crypto.randomUUID ? crypto.randomUUID() : "u" + Math.random().toString(36).slice(2) + Date.now().toString(36));
 
-  // How full a space usually is at a given hour (0..1)
   function occupancy(kind, hourOfDay) {
     const peak = { library: 0.86, coworking: 0.72, atrium: 0.7, rooms: 0.65, lounge: 0.5, cafe: 0.6 }[kind] || 0.6;
     const curve = Math.exp(-Math.pow((hourOfDay - 14.5) / 4.2, 2));
@@ -207,7 +187,7 @@
       try { return JSON.parse(localStorage.getItem(KEY)) || null; } catch (e) { return null; }
     }
     save(db) {
-      try { localStorage.setItem(KEY, JSON.stringify(db)); } catch (e) { /* storage full / blocked */ }
+      try { localStorage.setItem(KEY, JSON.stringify(db)); } catch (e) { }
       this.db = db;
     }
     async init() {
@@ -230,9 +210,8 @@
       return { ...base, ...o };
     }
     simulate() {
-      // Keep a realistic number of "other students" checked in.
       const db = this.db, now = Date.now();
-      const local = new Date(now + 5 * HOUR); // Astana, UTC+5
+      const local = new Date(now + 5 * HOUR); 
       const hourOfDay = local.getUTCHours() + local.getUTCMinutes() / 60;
       let changed = false;
       for (const base of this.seed.spaces) {
@@ -251,7 +230,7 @@
           list.push({ s: st, e: st + (60 + Math.random() * 120) * MIN, o: Math.random() < Math.min(0.55, 0.8 * s.outlet_capacity / s.seat_capacity) });
           db.activity[s.id] = Math.max(db.activity[s.id] || 0, st);
           changed = true;
-          if (!first && list.length < target - 3) break; // arrive gradually
+          if (!first && list.length < target - 3) break;
         }
         if (!open && list.length) { list = []; changed = true; }
         db.sim[s.id] = list;
@@ -368,12 +347,10 @@
       return out;
     }
     subscribe(onChange) {
-      // Other tabs of the same browser act as "other devices" in demo mode.
       window.addEventListener("storage", (e) => { if (e.key === KEY || e.key === SKEY) onChange(); });
     }
   }
 
-  // ---------- factory ----------
   function loadScript(src) {
     return new Promise((res, rej) => {
       const s = document.createElement("script");

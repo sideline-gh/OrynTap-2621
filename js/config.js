@@ -14,6 +14,6 @@
 // NEVER put a Secret key (sb_secret_…) or the service_role key here.
 // =====================================================================
 window.ORYNTAP_CONFIG = {
-  SUPABASE_URL: "",
-  SUPABASE_ANON_KEY: "",
+  SUPABASE_URL: "https://ausnycqeqjydsesppdud.supabase.co", 
+  SUPABASE_ANON_KEY: "sb_publishable_qrXjBqJlhlxtUoNoUZNcEQ_vdWU2fC2",
 };

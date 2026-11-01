@@ -406,19 +406,18 @@
           pct_left_early: Math.round(100 * early / g.length), pct_ended_by_itself: Math.round(100 * (g.length - early) / g.length) };
       }).filter(Boolean);
     }
-    // Demo of the smart extension: AITU spaces have a simulated door sensor. A sensor also
-    // counts people who did not check in, so it shows a bit more than the check-ins.
+    // Demo of the smart extension (Part D): a simulated door counter at the AITU Library,
+    // returning the same fields as the view space_sensor_now. A sensor also counts people who
+    // did not check in, so it shows a bit more than the check-ins. New value every 10 s.
     async getSensorNow() {
       const aitu = this.unis.find(x => x.code === "AITU"); if (!aitu) return {};
-      const now = Date.now(), minute = Math.floor(now / MIN), out = {};
-      for (const s of this.seed.spaces.filter(x => x.university_id === aitu.id)) {
-        const row = this.withCounts(s);
-        const inside = s.seat_capacity - row.free_seats;
-        if (App.statusOf(row).state === "closed") continue;
-        const n = Math.min(s.seat_capacity, Math.max(0, Math.round(inside * 1.3 + 3 * Math.sin(minute / 3 + s.id))));
-        out[s.id] = { space_id: s.id, people_inside: n < 3 ? null : n, few: n < 3, measured_at: new Date(minute * MIN).toISOString() };
-      }
-      return out;
+      const s = this.seed.spaces.find(x => x.university_id === aitu.id && x.name === "Library"); if (!s) return {};
+      const row = this.withCounts(s);
+      const closed = App.statusOf(row).state === "closed";          // closed: a real counter shows ~0
+      const tick = Math.floor(Date.now() / 10000), inside = s.seat_capacity - row.free_seats;
+      const n = closed ? 0 : Math.min(s.seat_capacity, Math.max(0, Math.round(inside * 1.3 + 4 * Math.sin(tick / 5))));
+      return { [s.id]: { space_id: s.id, people_inside: n < 3 ? null : n, few: n < 3, measured_at: new Date(tick * 10000).toISOString(),
+        space_name: s.name, seat_capacity: s.seat_capacity, free_seats: n < 3 ? null : Math.max(s.seat_capacity - n, 0) } };
     }
     subscribe(onChange) {
       // Other tabs of the same browser act as "other devices" in demo mode.

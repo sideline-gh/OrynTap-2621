@@ -83,6 +83,9 @@
       // Stage 2: statistics + door sensor
       sensor_now: "Door sensor: about {n} people inside",
       sensor_few: "Door sensor: fewer than 3 people inside",
+      occ_title: "Live occupancy", occ_sim: "Simulated sensor", occ_inside: "People inside", occ_free: "Free seats", occ_updated: "Last update",
+      occ_few: "fewer than 3", occ_sec_ago: "{n} s ago",
+      occ_note: "Counted at the door by a simulated people counter (ESP32 + 2 ToF sensors, Python script). No real sensor is connected yet. The cards below count check-ins.",
       ins_use: "Use for its size",
       ins_use_p: "Check-ins per 100 seats (all finished check-ins), and how many needed a power outlet.",
       ins_use_val: "{n} per 100 seats · {c} check-ins · {o}% outlet",
@@ -186,6 +189,9 @@
       // Stage 2: statistics + door sensor
       sensor_now: "Датчик у входа: внутри около {n} человек",
       sensor_few: "Датчик у входа: внутри меньше 3 человек",
+      occ_title: "Заполненность сейчас", occ_sim: "Симуляция датчика", occ_inside: "Людей внутри", occ_free: "Свободных мест", occ_updated: "Обновлено",
+      occ_few: "меньше 3", occ_sec_ago: "{n} с назад",
+      occ_note: "Считает симулированный счётчик у входа (ESP32 + 2 ToF-датчика, Python-скрипт). Настоящий датчик пока не подключён. Карточки ниже считают отметки студентов.",
       ins_use: "Загрузка с учётом размера",
       ins_use_p: "Отметки на 100 мест (все завершённые) и доля тех, кому нужна розетка.",
       ins_use_val: "{n} на 100 мест · {c} отметок · розетка {o}%",
@@ -289,6 +295,9 @@
       // Stage 2: statistics + door sensor
       sensor_now: "Кірудегі датчик: ішінде шамамен {n} адам",
       sensor_few: "Кірудегі датчик: ішінде 3 адамнан аз",
+      occ_title: "Қазіргі толымдылық", occ_sim: "Датчик симуляциясы", occ_inside: "Ішіндегі адам", occ_free: "Бос орын", occ_updated: "Жаңартылды",
+      occ_few: "3-тен аз", occ_sec_ago: "{n} с бұрын",
+      occ_note: "Кірудегі симуляцияланған есептегіш санайды (ESP32 + 2 ToF датчигі, Python скрипті). Нақты датчик әлі қосылмаған. Төмендегі карточкалар студенттердің белгілерін санайды.",
       ins_use: "Көлеміне қарай жүктеме",
       ins_use_p: "100 орынға шаққандағы белгілер (барлық аяқталған) және розетка керек болғандардың үлесі.",
       ins_use_val: "100 орынға {n} · {c} белгі · розетка {o}%",

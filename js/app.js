@@ -327,6 +327,43 @@
     return `<p class="sensor">${I.sensor}<span>${esc(txt)} · ${esc(agoText(r.measured_at))}</span></p>`;
   }
 
+  // Part D (IoT): occupancy panel on Home. Data = view space_sensor_now in Supabase, written by
+  // the Python door-counter simulator (iot/sensor_sim.py). No real sensor is connected yet.
+  // Refreshed every 10 s (see timers). Free seats = seats - people inside (computed in the view).
+  const secAgo = (iso) => {
+    const sec = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000));
+    return sec < 60 ? t("occ_sec_ago", { n: sec }) : agoText(iso);
+  };
+  function occupancyPanel() {
+    const rows = state.spaces.filter(s => state.sensor && state.sensor[s.id]).map(s => [s, state.sensor[s.id]]);
+    if (!rows.length) return `<div id="occ" hidden></div>`;
+    const blocks = rows.map(([s, r]) => {
+      const cap = r.seat_capacity ?? s.seat_capacity;
+      const free = r.few ? null : (r.free_seats ?? Math.max(cap - r.people_inside, 0));
+      const time = new Date(r.measured_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      return `<div class="occ-space">
+        <h3>${esc(r.space_name || s.name)}</h3>
+        <div class="stats occ-stats">
+          <div class="stat"><div class="num">${r.few ? esc(t("occ_few")) : r.people_inside}</div><div class="lbl">${esc(t("occ_inside"))}</div></div>
+          <div class="stat"><div class="num">${free == null ? "≥ " + (cap - 2) : free}<small> / ${cap}</small></div><div class="lbl">${esc(t("occ_free"))}</div></div>
+          <div class="stat"><div class="num">${esc(time)}</div><div class="lbl">${esc(t("occ_updated"))} · <span data-since="${esc(r.measured_at)}">${esc(secAgo(r.measured_at))}</span></div></div>
+        </div>
+      </div>`;
+    }).join("");
+    return `<section class="occ" id="occ" aria-label="${esc(t("occ_title"))}">
+      <div class="occ-head">${I.sensor}<h2>${esc(t("occ_title"))}</h2><span class="occ-tag">${esc(t("occ_sim"))}</span></div>
+      ${blocks}
+      <p class="occ-note">${esc(t("occ_note"))}</p>
+    </section>`;
+  }
+  async function refreshOccupancy() {
+    const st = state.store;
+    if (!st.getSensorNow || state.route !== "home" || document.hidden) return;
+    state.sensor = await st.getSensorNow().catch(() => state.sensor) || {};
+    const el = $("#occ"); if (!el) return;
+    el.outerHTML = occupancyPanel();
+  }
+
   function card(s, opts = {}) {
     const st = statusOf(s);
     const here = state.active && state.active.space_id === s.id;
@@ -395,6 +432,7 @@
       ${live}
       ${howtoTeaser()}
       ${sessionBanner()}
+      ${state.loading ? "" : occupancyPanel()}
       <div class="chips" role="group" aria-label="${esc(t("filters"))}">${chips}</div>
       ${body}`;
   }
@@ -832,6 +870,8 @@
       }
     }
   }, 1000);
+  setInterval(() => { document.querySelectorAll("[data-since]").forEach(el => { el.textContent = secAgo(el.dataset.since); }); }, 1000);
+  setInterval(refreshOccupancy, 10e3);   // Part D: occupancy panel, every 10 s
   setInterval(() => { if (!$("#modalRoot").innerHTML && !state.editing) refresh(); }, 30e3);
   addEventListener("online", refresh);
   addEventListener("offline", () => { state.offlineSince = Date.now(); render(); });

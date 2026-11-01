@@ -1,0 +1,13 @@
+database/backup/
+assets/img/photos/*.tmp
+
+# Secrets: never commit these
+.env
+*.env
+!.env.example
+iot/.env
+iot/sensors.local.json
+
+# Python
+__pycache__/
+*.pyc

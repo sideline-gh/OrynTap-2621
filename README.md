@@ -83,7 +83,7 @@ All paths are relative and routing uses `#/…`, so nothing else is needed. The 
 
 **Check-in rule:** a student can only check in at spaces of their own university (RLS policy `check_ins_own_insert`). Other universities can still be browsed.
 
-**Database created before 14 Oct 2026?** Run `database/05_update_2026-10-14.sql` once in the SQL Editor. It sets the admin e-mails, adds the own-university check-in rule and removes the old seeded `admin@…` accounts, without touching other data. Then run `database/06_update_multimedia.sql` once: it adds the alt-text column and points every space to our own WebP photos or illustrations (Assignment 4).
+**Database created before 14 Oct 2026?** Run `database/05_update_2026-10-14.sql` once in the SQL Editor. It sets the admin e-mails, adds the own-university check-in rule and removes the old seeded `admin@…` accounts, without touching other data. Then run `database/06_update_multimedia.sql` once: it adds the alt-text column and points every space to our own WebP photos or illustrations (Assignment 4). Then run `database/07_stage2.sql` and `database/08_iot_occupancy.sql` once (Project Stage 2: admin statistics and the simulated door sensor). A fresh install runs 01, 02, 07 and 08 only.
 
 > The anon key is public by design. Everything it can do is limited by Row-Level Security. **Never** put the `service_role` key in the website.
 
@@ -151,6 +151,22 @@ Backups contain password hashes, so `database/backup/` is git-ignored: keep them
 
 ---
 
+## 6b. Project Stage 2 (End-term)
+
+**Statistics for administrators (Part C5).** After `07_stage2.sql`, an admin's Profile shows busiest hours, use per 100 seats and stay length for their own university. A student gets no rows; anonymous visitors cannot call the functions.
+
+**Repeat the analysis (Part C2).**
+1. Supabase → SQL Editor → paste one query from `analysis/queries.sql` → Run → *Download CSV* as `q1.csv`, `q2.csv`, `q3.csv`.
+2. `pip install matplotlib` (once), then `python3 analysis/make_charts.py <folder with the CSVs>`.
+Only finished check-ins are counted and there is no date window, because the seed history is fixed in time. With real users add `AND c.started_at > now() - interval '30 days'`.
+
+**IoT door counter, simulated (Part D).** No real hardware is connected: `iot/sensor_sim.py` simulates an ESP32 with two ToF sensors at the AITU Library door and sends "people inside" to Supabase every 10 s. The Home page shows it in the **Live occupancy** panel (people inside, free seats, last update), refreshed every 10 s.
+1. SQL Editor: run `database/08_iot_occupancy.sql` (after 07), then the `register_sensor` SELECT at its end; copy the secret.
+2. `cp iot/.env.example iot/.env` and fill it in (publishable key only, never the secret/service_role key; `iot/.env` is git-ignored).
+3. `python3 iot/sensor_sim.py`. Full instructions: `iot/README.md`.
+
+In demo mode (empty `js/config.js`) the browser simulates the sensors and the statistics itself.
+
 ## 7. Project structure
 
 ```
@@ -168,6 +184,15 @@ database/03_demo_live_activity.sql   refresh "live" check-ins before a demo
 database/generate_seed.py  one source of truth: python3 database/generate_seed.py
 database/05_update_2026-10-14.sql   one-time update: admin e-mails, own-university check-in
 database/06_update_multimedia.sql    one-time update: own WebP photos, alt-text column
+database/07_stage2.sql     Stage 2: admin statistics functions, sensor tables, ingest_reading()
+analysis/queries.sql       Stage 2 Part C: the three analysis queries (Q1–Q3)
+analysis/make_charts.py    draws the three charts from the CSV results
+database/08_iot_occupancy.sql  Part D: free seats in space_sensor_now, seat-capacity check
+iot/sensor_sim.py          Part D: simulated door counter, 2 ToF sensors (Python, no packages)
+iot/test_sensor_sim.py     tests of the counting logic
+iot/.env.example           settings template (copy to iot/.env, never commit .env)
+iot/README.md              how to set up and run the simulation
+js/demo-history.js         generated: 640 finished check-ins for the demo-mode statistics
 tools/optimise_images.py   original photo -> sized WebP files
 tools/make_chime.py        synthesises the Pomodoro chime
 media-src/                 original photos and sound (not loaded by the site)

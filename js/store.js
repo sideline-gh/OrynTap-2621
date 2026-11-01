@@ -159,6 +159,24 @@
       if (error) throw error;
       return data;
     }
+    // Stage 2, Part C5: the same numbers as analysis/queries.sql, for the admin's university
+    async spaceStats() {
+      const { data, error } = await this.sb.rpc("admin_space_stats");
+      if (error) throw error;
+      return data;
+    }
+    async stayStats() {
+      const { data, error } = await this.sb.rpc("admin_stay_stats");
+      if (error) throw error;
+      return data;
+    }
+    // Stage 2, Part D3: latest door-sensor count per space (view space_sensor_now).
+    // Before 07_stage2.sql is run the view does not exist: then there is simply no sensor data.
+    async getSensorNow() {
+      const { data, error } = await this.sb.from("space_sensor_now").select("*");
+      if (error) return {};
+      const out = {}; (data || []).forEach(r => { out[r.space_id] = r; }); return out;
+    }
     subscribe(onChange) {
       // R4 / R9: every check-in or leave bumps space_activity -> all browsers refresh
       this.sb.channel("oryntap-live")
@@ -346,13 +364,59 @@
       this.db.activity[id] = Date.now();
       this.save(this.db);
     }
+    // Demo statistics use the same 640 generated check-ins as database/02_seed.sql
+    // (js/demo-history.js, loaded only when an admin opens the profile).
+    async history() {
+      const u = this.currentUser(); if (!u || u.role !== "admin") return null;
+      if (!window.ORYNTAP_DEMO_HISTORY) await loadScript("js/demo-history.js");
+      const now = Date.now();
+      const today = Math.floor((now + 5 * HOUR) / (24 * HOUR)) * 24 * HOUR - 5 * HOUR; // 00:00 in Astana
+      const mine = new Set(this.seed.spaces.filter(s => s.university_id === u.university_id).map(s => s.id));
+      return window.ORYNTAP_DEMO_HISTORY.map(([space, d, hm, planned, stayed, outlet]) => {
+        const [h, m] = hm.split(":").map(Number);
+        return { space, start: today - d * 24 * HOUR + (h * 60 + m) * MIN, hour: h, planned, stayed, outlet: !!outlet };
+      }).filter(r => mine.has(r.space) && r.start + r.stayed * MIN <= now);   // finished check-ins only
+    }
     async usageByHour() {
-      const u = this.currentUser(); if (!u || u.role !== "admin") return [];
-      // Demo: synthesise a believable profile from the occupancy curve
-      const out = [];
-      for (const s of this.seed.spaces.filter(x => x.university_id === u.university_id)) {
-        for (let h = 8; h <= 22; h++) out.push({ space_id: s.id, space_name: s.name, hour_of_day: h,
-          check_ins: Math.round(s.seat_capacity * occupancy(s.kind, h) * 0.6) });
+      const rows = await this.history(); if (!rows) return [];
+      const by = {};
+      rows.forEach(r => { const k = r.space + ":" + r.hour; by[k] = (by[k] || 0) + 1; });
+      return Object.entries(by).map(([k, n]) => {
+        const [id, h] = k.split(":").map(Number);
+        return { space_id: id, space_name: this.seed.spaces.find(s => s.id === id).name, hour_of_day: h, check_ins: n };
+      });
+    }
+    async spaceStats() {
+      const rows = await this.history(); if (!rows) return [];
+      const u = this.currentUser();
+      return this.seed.spaces.filter(s => s.university_id === u.university_id).map(s => {
+        const mine = rows.filter(r => r.space === s.id);
+        return { space_id: s.id, space_name: s.name, seats: s.seat_capacity, check_ins: mine.length,
+          per_100_seats: Math.round(1000 * mine.length / s.seat_capacity) / 10,
+          pct_with_outlet: mine.length ? Math.round(100 * mine.filter(r => r.outlet).length / mine.length) : null };
+      }).sort((a, b) => b.per_100_seats - a.per_100_seats);
+    }
+    async stayStats() {
+      const rows = await this.history(); if (!rows) return [];
+      return [1, 2, 3].map(h => {
+        const g = rows.filter(r => r.planned === h * 60); if (!g.length) return null;
+        const early = g.filter(r => r.stayed < r.planned).length;
+        return { planned_hours: h, check_ins: g.length,
+          avg_stay_min: Math.round(g.reduce((a, r) => a + r.stayed, 0) / g.length),
+          pct_left_early: Math.round(100 * early / g.length), pct_ended_by_itself: Math.round(100 * (g.length - early) / g.length) };
+      }).filter(Boolean);
+    }
+    // Demo of the smart extension: AITU spaces have a simulated door sensor. A sensor also
+    // counts people who did not check in, so it shows a bit more than the check-ins.
+    async getSensorNow() {
+      const aitu = this.unis.find(x => x.code === "AITU"); if (!aitu) return {};
+      const now = Date.now(), minute = Math.floor(now / MIN), out = {};
+      for (const s of this.seed.spaces.filter(x => x.university_id === aitu.id)) {
+        const row = this.withCounts(s);
+        const inside = s.seat_capacity - row.free_seats;
+        if (App.statusOf(row).state === "closed") continue;
+        const n = Math.min(s.seat_capacity, Math.max(0, Math.round(inside * 1.3 + 3 * Math.sin(minute / 3 + s.id))));
+        out[s.id] = { space_id: s.id, people_inside: n < 3 ? null : n, few: n < 3, measured_at: new Date(minute * MIN).toISOString() };
       }
       return out;
     }

@@ -26,6 +26,7 @@
     userFill: '<svg class="i-fill" viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="12" r="7" fill="currentColor"/><path d="M7 35v-3.5c0-5.2 4.3-9.5 9.5-9.5h7c5.2 0 9.5 4.3 9.5 9.5V35z" fill="currentColor"/></svg>',
     sun: '<svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="6" fill="currentColor"/><g stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-dasharray="2 3"><path d="M16 2v4M16 26v4M2 16h4M26 16h4M6 6l2.8 2.8M23.2 23.2 26 26M6 26l2.8-2.8M23.2 8.8 26 6"/></g></svg>',
     moon: '<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M20.5 4.5A12 12 0 1 0 27.5 22 10 10 0 0 1 20.5 4.5z" fill="currentColor"/></svg>',
+    sensor: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 13.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7M5.6 5.6a9 9 0 0 0 0 12.8M18.4 5.6a9 9 0 0 1 0 12.8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
     play: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"/></svg>',
     x: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>',
     bell: '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15zM10 20.5a2 2 0 0 0 4 0" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"/></svg>',
@@ -87,7 +88,7 @@
     spaces: [], favSpaces: [], session: null, active: null, favs: new Set(),
     filters: new Set(LS.get("oryntap.filters", [])),
     route: "home", editing: false, authMode: "login", loading: true,
-    offlineSince: null, pomodoro: null, sound: LS.get("oryntap.sound", false),
+    offlineSince: null, pomodoro: null, sensor: {}, sound: LS.get("oryntap.sound", false),
   };
   const isAdmin = () => state.session && state.session.profile.role === "admin";
   const uni = () => state.unis.find(u => u.id === state.uniId);
@@ -179,12 +180,13 @@
         state.uniId = state.session ? state.session.profile.university_id : state.unis[0].id;
         LS.set("oryntap.uni", state.uniId);
       }
-      const [spaces, active, favs] = await Promise.all([
+      const [spaces, active, favs, sensor] = await Promise.all([
         st.getSpaces(state.uniId),
         state.session ? st.getActiveCheckIn() : null,
         state.session && !isAdmin() ? st.getFavourites() : [],
+        st.getSensorNow ? st.getSensorNow().catch(() => ({})) : {},
       ]);
-      state.spaces = spaces; state.active = active; state.favs = new Set(favs);
+      state.spaces = spaces; state.active = active; state.favs = new Set(favs); state.sensor = sensor || {};
       // Name of the place where the student is checked in, even if it is not in the current list
       if (active && !spaces.some(s => s.id === active.space_id) && (!state.activeSpace || state.activeSpace.id !== active.space_id)) {
         state.activeSpace = (await st.getSpacesByIds([active.space_id]).catch(() => []))[0] || null;
@@ -317,6 +319,14 @@
   //  * the first card is the largest element on screen, so it loads at once; the rest load lazily
   //  * alt text comes from the database (image_alt); illustrations have none -> alt="" (decorative,
   //    the heading below already names the place)
+  // Stage 2, Part D3: count from the (simulated) door sensor, if this space has one.
+  // Fewer than 3 people is shown as "few" (privacy rule from database/07_stage2.sql).
+  function sensorLine(s) {
+    const r = state.sensor && state.sensor[s.id]; if (!r) return "";
+    const txt = r.few ? t("sensor_few") : t("sensor_now", { n: r.people_inside });
+    return `<p class="sensor">${I.sensor}<span>${esc(txt)} · ${esc(agoText(r.measured_at))}</span></p>`;
+  }
+
   function card(s, opts = {}) {
     const st = statusOf(s);
     const here = state.active && state.active.space_id === s.id;
@@ -349,6 +359,7 @@
         ${here ? `<span class="here-badge">● ${esc(t("here"))}</span>` : ""}
         <p class="status"><span class="st ${st.state}">${esc(st.label)}</span><span class="sep" aria-hidden="true"></span><span>${esc(st.detail)}</span><span class="upd">${esc(ago(s.updated_at))}</span></p>
         ${where ? `<p class="where">${I.pin}<span>${esc(where)}</span></p>` : ""}
+        ${sensorLine(s)}
         ${factList(s)}
         <div class="card-actions">${actions}</div>
       </div>
@@ -484,7 +495,10 @@
         </div>
         <div class="profile-foot"><button class="btn" data-act="logout">${esc(t("logout"))}</button></div>
       </section>
-      ${isAdmin() ? `<section class="box insights" id="insights"><h2>${esc(t("busiest"))}</h2><p class="muted">${esc(t("busiest_p"))}</p><div id="insightBody" class="skeleton" style="height:120px"></div></section>` : ""}`;
+      ${isAdmin() ? `<section class="box insights" id="insights"><h2>${esc(t("busiest"))}</h2><p class="muted">${esc(t("busiest_p"))}</p><div id="insightBody" class="skeleton" style="height:120px"></div>
+        <h2 class="ins-h">${esc(t("ins_use"))}</h2><p class="muted">${esc(t("ins_use_p"))}</p><div id="insightUse" class="skeleton" style="height:90px"></div>
+        <h2 class="ins-h">${esc(t("ins_stay"))}</h2><p class="muted">${esc(t("ins_stay_p"))}</p><div id="insightStay" class="skeleton" style="height:90px"></div>
+        <p class="muted ins-src">${esc(t("ins_src"))}</p></section>` : ""}`;
   }
 
   async function loadInsights() {
@@ -503,6 +517,28 @@
           <div class="bar-labels">${hours.map(h => `<span>${h % 2 ? "" : h}</span>`).join("")}</div></div>`;
       }).join("") || `<p class="muted">${esc(t("no_checkins"))}</p>`;
     } catch (e) { el.className = ""; el.removeAttribute("style"); el.innerHTML = `<p class="muted">${esc(t("insights_fail"))}</p>`; }
+    loadMoreInsights();
+  }
+  // Stage 2, Part C5: results of analysis questions Q2 and Q3 inside the product
+  async function loadMoreInsights() {
+    const u = $("#insightUse"), s = $("#insightStay"); if (!u || !s) return;
+    const done = (el) => { el.className = ""; el.removeAttribute("style"); };
+    try {
+      const rows = await state.store.spaceStats();
+      const max = Math.max(1, ...rows.map(r => Number(r.per_100_seats)));
+      done(u);
+      u.innerHTML = rows.length ? `<ul class="use-list">${rows.map(r => `<li><span class="nm">${esc(r.space_name)}</span>
+          <span class="bar" aria-hidden="true"><i style="width:${Math.round(Number(r.per_100_seats) / max * 100)}%"></i></span>
+          <span class="val">${esc(t("ins_use_val", { n: Number(r.per_100_seats).toFixed(1), c: r.check_ins, o: r.pct_with_outlet == null ? "—" : r.pct_with_outlet }))}</span></li>`).join("")}</ul>`
+        : `<p class="muted">${esc(t("no_checkins"))}</p>`;
+    } catch (e) { done(u); u.innerHTML = `<p class="muted">${esc(t("insights_fail"))}</p>`; }
+    try {
+      const rows = await state.store.stayStats();
+      done(s);
+      s.innerHTML = rows.length ? `<table class="stay-table"><thead><tr><th scope="col">${esc(t("ins_planned"))}</th><th scope="col">${esc(t("ins_n"))}</th><th scope="col">${esc(t("ins_avg"))}</th><th scope="col">${esc(t("ins_early"))}</th><th scope="col">${esc(t("ins_auto"))}</th></tr></thead>
+        <tbody>${rows.map(r => `<tr><td>${esc(t("hours_short", { h: r.planned_hours }))}</td><td>${r.check_ins}</td><td>${esc(t("ins_min", { m: r.avg_stay_min }))}</td><td>${r.pct_left_early}%</td><td>${r.pct_ended_by_itself}%</td></tr>`).join("")}</tbody></table>`
+        : `<p class="muted">${esc(t("no_checkins"))}</p>`;
+    } catch (e) { done(s); s.innerHTML = `<p class="muted">${esc(t("insights_fail"))}</p>`; }
   }
 
   function afterRender() {

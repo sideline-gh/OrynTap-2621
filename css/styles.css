@@ -535,3 +535,26 @@ img { display: block; max-width: 100%; }
   .session.flash { animation: none; outline: 3px solid var(--accent); }
 }
 @media (max-width: 720px) { .howto-thumb .play { width: 30px; height: 30px; } .howto-thumb .play svg { width: 13px; height: 13px; } }
+
+/* =====================================================================
+   Project Stage 2: door sensor line and extra admin statistics
+   ===================================================================== */
+.sensor { font-size: 13px; color: var(--text-2); margin: -6px 0 10px; display: flex; gap: 5px; align-items: center; }
+.sensor svg { width: 15px; height: 15px; flex: none; color: var(--accent); }
+.ins-h { margin-top: 26px !important; }
+.ins-src { font-size: 12px; margin-top: 18px; }
+.use-list { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 8px; }
+.use-list li { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 2px 12px; align-items: center; font-size: 14px; }
+.use-list .nm { font-weight: 600; }
+.use-list .bar { height: 8px; background: var(--line-soft); border-radius: 99px; overflow: hidden; }
+.use-list .bar i { display: block; height: 100%; background: var(--accent); border-radius: inherit; }
+.use-list .val { grid-column: 2; font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.stay-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px; font-variant-numeric: tabular-nums; }
+.stay-table th, .stay-table td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line-soft); }
+.stay-table th { font-size: 12.5px; color: var(--muted); font-weight: 600; }
+@media (max-width: 720px) {
+  .use-list li { grid-template-columns: 1fr; }
+  .use-list .val { grid-column: 1; }
+  .stay-table { font-size: 12.5px; }
+  .stay-table th, .stay-table td { padding: 6px 4px; }
+}

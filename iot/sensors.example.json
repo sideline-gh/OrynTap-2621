@@ -1,0 +1,10 @@
+{
+  "supabase_url": "https://YOUR-PROJECT.supabase.co",
+  "anon_key": "sb_publishable_... (the same public key as in js/config.js)",
+  "sensors": [
+    { "label": "Library entrance",    "kind": "library",   "capacity": 250, "token": "paste secret 1" },
+    { "label": "Open Space entrance", "kind": "atrium",    "capacity": 70,  "token": "paste secret 2" },
+    { "label": "Coworking entrance",  "kind": "coworking", "capacity": 180, "token": "paste secret 3" },
+    { "label": "Coffeelake entrance", "kind": "cafe",      "capacity": 45,  "token": "paste secret 4" }
+  ]
+}

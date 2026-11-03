@@ -88,6 +88,7 @@
     spaces: [], favSpaces: [], session: null, active: null, favs: new Set(),
     filters: new Set(LS.get("oryntap.filters", [])),
     route: "home", editing: false, authMode: "login", loading: true,
+    drafts: {},   // what the user typed in the sign-up / login / profile forms (see keepForms)
     offlineSince: null, pomodoro: null, sensor: {}, sound: LS.get("oryntap.sound", false),
   };
   const isAdmin = () => state.session && state.session.profile.role === "admin";
@@ -172,8 +173,10 @@
 
   // ---------------- data ----------------
   const cacheKey = () => "oryntap.cache." + state.uniId;
-  async function refresh() {
+  // quiet = a background refresh (timer, Realtime, back online), not something the user just did
+  async function refresh(opts = {}) {
     const st = state.store;
+    const hadSession = !!state.session;
     try {
       state.session = await st.getSession();
       if (state.uniId == null || !state.unis.some(u => u.id === state.uniId)) {
@@ -202,6 +205,10 @@
     }
     state.loading = false;
     paintUniPicker();
+    // A form on screen (sign-up, login, profile) shows no live data, so a background refresh only
+    // updates the header and the menu. Re-rendering would rebuild the inputs and, on phones, close
+    // the keyboard. If the login state changed in the background, the page must change: render.
+    if (opts.quiet && $("#view form[data-keep]") && hadSession === !!state.session) { paintNav(); return; }
     render();
   }
 
@@ -210,9 +217,49 @@
     paintNav();
     const v = $("#view");
     const views = { home: viewHome, map: viewMap, favourites: viewFavourites, profile: viewProfile };
+    const focus = focusedField();
     v.innerHTML = (views[state.route] || viewHome)();
+    keepForms(v, focus);
     afterRender();
   }
+
+  // ---------------- form state ----------------
+  // render() rebuilds the page from templates, so the inputs of a form are new, empty elements
+  // after every render. That used to delete what a student had typed into the sign-up form
+  // whenever the page refreshed in the background. Now every form marked data-keep="<key>"
+  // stores its values in state.drafts[<key>] while the user types (listener below), and
+  // keepForms() puts them back, together with the cursor, after each render.
+  // Drafts live only in memory (never in localStorage) and are cleared when the form is
+  // completed (registered, logged in, profile saved) or cancelled on purpose.
+  function focusedField() {
+    const a = document.activeElement;
+    if (!a || !a.form || !a.form.dataset.keep || !a.name) return null;
+    let start = null, end = null;
+    try { start = a.selectionStart; end = a.selectionEnd; } catch (e) { /* checkbox: no cursor */ }
+    return { key: a.form.dataset.keep, name: a.name, start, end };
+  }
+  function keepForms(root, focus) {
+    root.querySelectorAll("form[data-keep]").forEach(f => {
+      const d = state.drafts[f.dataset.keep]; if (!d) return;
+      for (const [name, val] of Object.entries(d)) {
+        const el = f.elements.namedItem(name); if (!el || !el.tagName) continue;
+        if (el.type === "checkbox") el.checked = !!val; else el.value = val;
+      }
+    });
+    if (!focus) return;
+    const f = root.querySelector(`form[data-keep="${focus.key}"]`);
+    const el = f && f.elements.namedItem(focus.name);
+    if (!el || !el.focus) return;
+    el.focus({ preventScroll: true });
+    if (focus.start != null) { try { el.setSelectionRange(focus.start, focus.end); } catch (e) {} }
+  }
+  function rememberField(e) {
+    const el = e.target, f = el && el.form;
+    if (!f || !f.dataset.keep || !el.name) return;
+    (state.drafts[f.dataset.keep] = state.drafts[f.dataset.keep] || {})[el.name] = el.type === "checkbox" ? el.checked : el.value;
+  }
+  $("#view").addEventListener("input", rememberField);
+  $("#view").addEventListener("change", rememberField);
 
   function modeBanner() {
     let html = "";
@@ -371,7 +418,7 @@
     const where = [s.building, s.floor].filter(Boolean).join(" · ");
     const corner = isAdmin()
       ? (state.session.profile.university_id === s.university_id ? `<button class="edit-btn" data-act="edit" data-id="${s.id}">${esc(t("btn_edit"))}</button>` : "")
-      : `<button class="heart-btn" data-act="fav" data-id="${s.id}" aria-pressed="${fav}" aria-label="${esc(t(fav ? "fav_remove" : "fav_add", { n: s.name }))}">${heartIcon(fav)}</button>`;
+      : `<button class="heart-btn" data-act="fav" data-id="${s.id}" aria-pressed="${fav}" aria-label="${esc(t(!state.session ? "fav_login" : fav ? "fav_remove" : "fav_add", { n: s.name }))}"${state.session ? "" : ` title="${esc(t("fav_login", { n: s.name }))}"`}>${heartIcon(fav)}</button>`;
     let actions = "";
     if (isAdmin()) {
       if (state.session.profile.university_id === s.university_id) actions = `<button class="btn small" data-act="qr" data-id="${s.id}">${esc(t("btn_qr"))}</button>`;
@@ -380,7 +427,7 @@
     } else if (otherUni(s)) {
       actions = `<button class="btn small" disabled>${esc(t("only_uni", { u: uniShort(s.university_id) }))}</button>`;
     } else {
-      actions = `<button class="btn small ${st.state === "closed" ? "" : "primary"}" data-act="checkin" data-id="${s.id}" ${st.state === "closed" ? "disabled" : ""}>${esc(t(st.state === "closed" ? "btn_closed" : "btn_checkin"))}</button>`;
+      actions = `<button class="btn small ${st.state === "closed" ? "" : "primary"}" data-act="checkin" data-id="${s.id}" ${st.state === "closed" ? "disabled" : ""}>${esc(t(st.state === "closed" ? "btn_closed" : state.session ? "btn_checkin" : "btn_checkin_login"))}</button>`;
     }
     const uniTag = opts.showUni ? `<p class="uni-tag">${esc((state.unis.find(u => u.id === s.university_id) || {}).name || "")}</p>` : "";
     return `<article class="card" id="space-${s.id}">
@@ -479,9 +526,12 @@
       const u = uni();
       const ph = !u ? "barcode@astanait.edu.kz" : u.short === "AITU" ? "barcode@astanait.edu.kz" : u.short === "NU" ? "name.surname@nu.edu.kz" : `your.name@${u.domains[0]}`;
       const demoHint = state.store.mode === "demo" ? `<p class="hint">${esc(t("demo_hint"))}</p>` : "";
+      const next = sessionStorage.getItem("oryntap.afterLabel");
+      const afterHint = next ? `<p class="hint">${esc(next)}</p>` : "";
       if (state.authMode === "signup") {
-        return `<form class="box auth-box" id="signupForm" novalidate>
+        return `<form class="box auth-box" id="signupForm" data-keep="signup" novalidate>
           <h2>${esc(t("signup"))}</h2>
+          ${afterHint}
           <p class="form-error" id="formErr" role="alert"></p>
           <label class="field"><span class="sr-only">${esc(t("name"))}</span><input class="input" name="first_name" placeholder="${esc(t("name"))}" autocomplete="given-name" required maxlength="50"></label>
           <label class="field"><span class="sr-only">${esc(t("surname"))}</span><input class="input" name="last_name" placeholder="${esc(t("surname"))}" autocomplete="family-name" maxlength="50"></label>
@@ -493,8 +543,9 @@
           ${demoHint}
         </form>`;
       }
-      return `<form class="box auth-box" id="loginForm" novalidate>
+      return `<form class="box auth-box" id="loginForm" data-keep="login" novalidate>
         <h2>${esc(t("login"))}</h2>
+        ${afterHint}
         <p class="form-error" id="formErr" role="alert"></p>
         <label class="field"><span class="sr-only">${esc(t("uni_email"))}</span><input class="input" name="email" type="email" placeholder="${esc(ph)}" autocomplete="username" required></label>
         <label class="field"><span class="sr-only">${esc(t("password"))}</span><input class="input" name="password" type="password" placeholder="${esc(t("password"))}" autocomplete="current-password" required></label>
@@ -506,7 +557,7 @@
     const p = s.profile, u = state.unis.find(x => x.id === p.university_id);
     const roleName = t(p.role === "admin" ? "role_admin" : "role_student");
     if (state.editing) {
-      return `<form class="box profile-box" id="profileForm">
+      return `<form class="box profile-box" id="profileForm" data-keep="profile">
         <h2 style="margin-bottom:22px">${esc(p.first_name)} ${esc(p.last_name)}</h2>
         <p class="form-error" id="formErr" role="alert"></p>
         <div class="edit-grid">
@@ -589,6 +640,21 @@
   }
 
   // ---------------- actions ----------------
+  // A logged-out student who taps "check in" or the heart is sent to the login page. What they
+  // wanted to do is remembered here (this browser tab only) and done right after login/sign-up.
+  const AFTER_KEYS = ["oryntap.after", "oryntap.afterFav", "oryntap.afterLabel"];
+  function rememberIntent(kind, space) {
+    AFTER_KEYS.forEach(k => sessionStorage.removeItem(k));
+    if (kind === "fav") sessionStorage.setItem("oryntap.afterFav", String(space.id));
+    else sessionStorage.setItem("oryntap.after", "#/checkin/" + space.id);
+    sessionStorage.setItem("oryntap.afterLabel", t(kind === "fav" ? "after_fav" : "after_checkin", { n: space.name }));
+  }
+  async function continueAfterLogin() {
+    const back = sessionStorage.getItem("oryntap.after"), fav = Number(sessionStorage.getItem("oryntap.afterFav"));
+    AFTER_KEYS.forEach(k => sessionStorage.removeItem(k));
+    if (fav && !isAdmin() && !state.favs.has(fav)) await toggleFav(fav);
+    location.hash = back || "#/home";
+  }
   function requireLogin(msg) {
     if (state.session) return true;
     toast(msg || t("need_login"));
@@ -604,9 +670,9 @@
     try {
       await state.store.signIn(email, pw);
       toast(t("welcome_back"));
+      state.drafts = {};
       state.uniId = null; await refresh();
-      const back = sessionStorage.getItem("oryntap.after"); sessionStorage.removeItem("oryntap.after");
-      location.hash = back || "#/home";
+      await continueAfterLogin();
     } catch (err) { $("#formErr").textContent = err.message; }
     finally { btn.disabled = false; }
   }
@@ -617,9 +683,13 @@
     btn.disabled = true;
     try {
       const res = await state.store.signUp(f);
-      if (res && res.needsConfirmation) { toast(t("confirm_email")); state.authMode = "login"; render(); return; }
+      // Registered: the sign-up form has done its job. If the e-mail must be confirmed first,
+      // the login form opens with the same e-mail already filled in.
+      delete state.drafts.signup;
+      if (res && res.needsConfirmation) { state.drafts.login = { email: f.email }; toast(t("confirm_email")); state.authMode = "login"; render(); return; }
       toast(t("account_created"));
-      state.uniId = null; await refresh(); location.hash = "#/home";
+      state.drafts = {};
+      state.uniId = null; await refresh(); await continueAfterLogin();
     } catch (err) { $("#formErr").textContent = err.message; }
     finally { btn.disabled = false; }
   }
@@ -629,12 +699,16 @@
     if (!String(f.first_name || "").trim()) { $("#formErr").textContent = t("name_empty"); return; }
     try {
       state.session.profile = { ...state.session.profile, ...(await state.store.updateProfile(state.session.user.id, f)) };
-      state.editing = false; toast(t("profile_saved")); render();
+      delete state.drafts.profile; state.editing = false; toast(t("profile_saved")); render();
     } catch (err) { $("#formErr").textContent = err.message; }
   }
 
   async function toggleFav(id) {
-    if (!requireLogin(t("login_fav"))) return;
+    if (!state.session) {
+      const sp = state.spaces.find(x => x.id === id) || state.favSpaces.find(x => x.id === id);
+      if (sp) rememberIntent("fav", sp);
+      requireLogin(t("login_fav")); return;
+    }
     const on = !state.favs.has(id);
     on ? state.favs.add(id) : state.favs.delete(id);
     render();
@@ -662,8 +736,10 @@
   }
 
   function openCheckIn(space) {
-    if (!requireLogin(t("login_checkin"))) { sessionStorage.setItem("oryntap.after", "#/checkin/" + space.id); return; }
+    if (!state.session) { rememberIntent("checkin", space); requireLogin(t("login_checkin")); return; }
     if (isAdmin()) return;
+    // Scanning the QR code of the place where you are already checked in = checking out
+    if (state.active && state.active.space_id === space.id) { confirmLeave(space); return; }
     if (otherUni(space)) { toast(t("only_uni_toast", { u: uniShort(space.university_id) }), true); return; }
     const st = statusOf(space);
     if (st.state === "closed") { toast(t("closed_now_toast", { n: space.name, d: st.detail }), true); return; }
@@ -671,6 +747,7 @@
     let hours = 2;
     openModal(`<h2>${esc(t("ci_title", { n: space.name }))}</h2>
       <p class="lead">${esc(t("ci_lead", { f: approx(space) + space.free_seats, c: space.seat_capacity, d: st.detail }))}</p>
+      <p class="hint" style="margin:-8px 0 16px">${esc(t("ci_here"))}</p>
       <div id="ciLabel" class="label">${esc(t("ci_how_long"))}</div>
       <div class="seg" role="radiogroup" aria-labelledby="ciLabel">${[1, 2, 3].map(h => `<button type="button" role="radio" aria-checked="${h === hours}" data-h="${h}">${esc(t("hours_short", { h }))}</button>`).join("")}</div>
       <label class="check"><input type="checkbox" id="ciOutlet" ${space.free_outlets > 0 ? "checked" : "disabled"}> ${esc(t("ci_outlet"))}${space.free_outlets > 0 ? "" : esc(t("ci_none_free"))}</label>
@@ -689,6 +766,15 @@
           await refresh();
         } catch (err) { e.target.disabled = false; fail(err); }
       });
+    });
+  }
+
+  function confirmLeave(space) {
+    openModal(`<h2>${esc(t("studying_at", { n: space.name }))}</h2>
+      <p class="lead">${esc(t("co_lead"))}</p>
+      <div class="form-actions" style="margin-top:0"><button class="btn secondary" data-dismiss>${esc(t("co_stay"))}</button><button class="btn primary" id="coGo">${esc(t("co_leave"))}</button></div>`,
+    (m, close) => {
+      $("#coGo", m).addEventListener("click", async (e) => { e.target.disabled = true; close(); await leave(); });
     });
   }
 
@@ -814,10 +900,10 @@
       case "clear-filters": state.filters.clear(); LS.set("oryntap.filters", []); render(); break;
       case "auth-mode": state.authMode = a.dataset.mode; render(); break;
       case "print": window.print(); break;
-      case "edit-profile": state.editing = true; render(); break;
-      case "cancel-edit": state.editing = false; render(); break;
+      case "edit-profile": delete state.drafts.profile; state.editing = true; render(); break;
+      case "cancel-edit": delete state.drafts.profile; state.editing = false; render(); break;
       case "logout":
-        state.store.signOut().then(() => { state.session = null; state.active = null; state.favs = new Set(); state.pomodoro = null; toast(t("logged_out")); location.hash = "#/home"; refresh(); });
+        state.store.signOut().then(() => { state.drafts = {}; AFTER_KEYS.forEach(k => sessionStorage.removeItem(k)); state.session = null; state.active = null; state.favs = new Set(); state.pomodoro = null; toast(t("logged_out")); location.hash = "#/home"; refresh(); });
         break;
       case "goto": location.hash = "#/home"; setTimeout(() => { const el = document.getElementById("space-" + id); if (el) el.scrollIntoView({ behavior: "smooth", block: "center" }); }, 60); break;
     }
@@ -844,6 +930,7 @@
     const changed = state.route !== r;
     state.route = r;
     if (r !== "profile") state.editing = false;
+    if (r !== "profile" && !state.session) AFTER_KEYS.forEach(k => sessionStorage.removeItem(k));   // gave up on logging in
     if (r === "favourites" && state.session && state.favs.size) {
       state.favSpaces = await state.store.getSpacesByIds([...state.favs]).catch(() => state.favSpaces);
     }
@@ -872,8 +959,8 @@
   }, 1000);
   setInterval(() => { document.querySelectorAll("[data-since]").forEach(el => { el.textContent = secAgo(el.dataset.since); }); }, 1000);
   setInterval(refreshOccupancy, 10e3);   // Part D: occupancy panel, every 10 s
-  setInterval(() => { if (!$("#modalRoot").innerHTML && !state.editing) refresh(); }, 30e3);
-  addEventListener("online", refresh);
+  setInterval(() => { if (!$("#modalRoot").innerHTML && !state.editing) refresh({ quiet: true }); }, 30e3);
+  addEventListener("online", () => refresh({ quiet: true }));
   addEventListener("offline", () => { state.offlineSince = Date.now(); render(); });
 
   // ---------------- boot ----------------
@@ -882,7 +969,7 @@
     try {
       state.store = await window.OrynStore.create();
       state.unis = await state.store.getUniversities();
-      state.store.subscribe(() => refresh());
+      state.store.subscribe(() => refresh({ quiet: true }));
       await refresh();
       await route();
       console.info(`[OrynTap] running in ${state.store.mode} mode`);

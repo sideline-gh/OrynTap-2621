@@ -1,0 +1,18 @@
+<!-- OrynTap: Supabase -> Authentication -> Emails -> Templates -> "Confirm signup".
+     Subject: OrynTap: поштаңызды растаңыз · подтвердите почту · confirm your e-mail
+     Paste everything below into "Message body". {{ .ConfirmationURL }} is filled in by Supabase. -->
+<div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:0 auto;color:#1c1f24;line-height:1.5">
+  <p style="font-size:22px;font-weight:700;margin:0 0 16px">Oryn<span style="color:#0a6fd6">Tap</span></p>
+
+  <p lang="kk" style="margin:0 0 6px"><strong>Сәлем!</strong> OrynTap аккаунтын ашу үшін университет поштаңызды растаңыз.</p>
+  <p lang="ru" style="margin:0 0 6px"><strong>Здравствуйте!</strong> Чтобы завершить регистрацию в OrynTap, подтвердите университетскую почту.</p>
+  <p lang="en" style="margin:0 0 18px"><strong>Hello!</strong> To finish creating your OrynTap account, please confirm your university e-mail.</p>
+
+  <p style="margin:0 0 18px"><a href="{{ .ConfirmationURL }}" style="display:inline-block;background:#0a6fd6;color:#ffffff;text-decoration:none;font-weight:600;padding:12px 22px;border-radius:10px">Растау · Подтвердить · Confirm</a></p>
+
+  <p lang="kk" style="margin:0 0 4px;font-size:13px;color:#555">Сілтеме бір рет жұмыс істейді және 1 сағаттан кейін жарамсыз болады. Мерзімі өтсе, OrynTap-та «Жаңа сілтеме жіберу» батырмасын басыңыз.</p>
+  <p lang="ru" style="margin:0 0 4px;font-size:13px;color:#555">Ссылка работает один раз и действует 1 час. Если она устарела, нажмите в OrynTap «Отправить новую ссылку».</p>
+  <p lang="en" style="margin:0 0 16px;font-size:13px;color:#555">The link works once and expires after 1 hour. If it has expired, tap “Send a new link” in OrynTap.</p>
+
+  <p style="margin:0;font-size:12px;color:#777">Егер сіз тіркелмеген болсаңыз, бұл хатты елемеңіз. · Если вы не регистрировались, просто проигнорируйте это письмо. · If you did not sign up, you can ignore this e-mail.</p>
+</div>

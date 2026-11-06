@@ -73,8 +73,10 @@ All paths are relative and routing uses `#/…`, so nothing else is needed. The 
    1. `database/01_schema.sql` (tables, constraints, triggers, RLS, grants)
    2. `database/02_seed.sql` (4 universities, 18 spaces, 116 users, about 700 check-ins, 150 favourites)
    ⚠️ Do **not** run `00_local_shim.sql` on Supabase. It is only for a plain local PostgreSQL.
-3. **Authentication → URL Configuration**: set *Site URL* to your GitHub Pages URL and add the same URL under *Redirect URLs*.
-4. **Authentication → Providers → Email**: set the minimum password length to 8. For a classroom demo you can turn off *Confirm email*. If you leave it on, new users must click the link in their university inbox.
+3. **Authentication → URL Configuration**: set *Site URL* to your GitHub Pages URL (`https://sideline-gh.github.io/OrynTap-2621/`) and add `https://sideline-gh.github.io/OrynTap-2621/**` under *Redirect URLs* (the `**` also allows the password reset link, which ends in `?reset=1`).
+4. **Authentication → Providers → Email**: set the minimum password length to 8 and keep **Confirm email ON**. New students then get a confirmation link and can log in only after opening it (database/09 also blocks check-ins, favourites and admin rights for unconfirmed accounts). The link works once and expires after *Email OTP Expiration* (default 3600 s = 1 h).
+   **E-mail sending:** Supabase's built-in sender is for testing only (a few e-mails per hour). For real students set **Authentication → Emails → SMTP Settings** to a free sender, e.g. a team Gmail account with an app password (`smtp.gmail.com`, port 465, user = the Gmail address, password = the 16-character app password). The SMTP password is entered only in the Supabase dashboard, never in this repository.
+   **E-mail texts in Kazakh, Russian and English:** in **Authentication → Emails → Templates**, paste `docs/email-templates/confirm-signup.html` into *Confirm signup* and `docs/email-templates/reset-password.html` into *Reset Password*; the subject line for each is written at the top of the file.
 5. **Authentication → Providers → Google**: keep it **disabled** (the site only uses university e-mail and password).
 6. **Project Settings → API**: copy the *Project URL* and the *anon public* key into `js/config.js`, then commit and push.
 7. Before a demo, run `database/03_demo_live_activity.sql` so the seat counts look alive. The seeded live check-ins expire after about an hour.
@@ -83,7 +85,7 @@ All paths are relative and routing uses `#/…`, so nothing else is needed. The 
 
 **Check-in rule:** a student can only check in at spaces of their own university (RLS policy `check_ins_own_insert`). Other universities can still be browsed.
 
-**Database created before 14 Oct 2026?** Run `database/05_update_2026-10-14.sql` once in the SQL Editor. It sets the admin e-mails, adds the own-university check-in rule and removes the old seeded `admin@…` accounts, without touching other data. Then run `database/06_update_multimedia.sql` once: it adds the alt-text column and points every space to our own WebP photos or illustrations (Assignment 4). Then run `database/07_stage2.sql` and `database/08_iot_occupancy.sql` once (Project Stage 2: admin statistics and the simulated door sensor). A fresh install runs 01, 02, 07 and 08 only.
+**Database created before 14 Oct 2026?** Run `database/05_update_2026-10-14.sql` once in the SQL Editor. It sets the admin e-mails, adds the own-university check-in rule and removes the old seeded `admin@…` accounts, without touching other data. Then run `database/06_update_multimedia.sql` once: it adds the alt-text column and points every space to our own WebP photos or illustrations (Assignment 4). Then run `database/07_stage2.sql` and `database/08_iot_occupancy.sql` once (Project Stage 2: admin statistics and the simulated door sensor), `database/09_photos_verification.sql` (team photos, e-mail verification guard) and `database/10_improvements.sql` (4 Nov 2026: check-in ends at closing time, Extend 1 h, “usually busy” hints, “Wrong number?” reports, Mokko/Sheker location fix, new Open Space photo). A fresh install runs 01, 02, 07, 08, 09 and 10.
 
 > The anon key is public by design. Everything it can do is limited by Row-Level Security. **Never** put the `service_role` key in the website.
 
@@ -167,6 +169,23 @@ Only finished check-ins are counted and there is no date window, because the see
 
 In demo mode (empty `js/config.js`) the browser simulates the sensors and the statistics itself.
 
+## 6c. Improvements of 4 Nov 2026 (`database/10_improvements.sql`)
+
+| Feature | Where | How it works |
+|---|---|---|
+| Reminder 10 min before a check-in ends | session banner | toast + system notification (if allowed) + chime (if sound is on), once per end time; the banner turns amber |
+| Extend 1 h | session banner | `extend_check_in()`: +1 h, at most 3 h ahead, never past closing time |
+| Automatic check-out at closing time | check-in | trigger `check_ins_until_closing` ends a new check-in at closing time at the latest; the dialog says so |
+| Forgot password | login form | Supabase sends a one-time link (1 h); the site then asks for a new password |
+| ★ Best right now | Home, first chip | order by free seats (50 %), free outlets (25 %) and time until closing (25 %); closed places last |
+| Usually busy | card, next to the tags | `space_busy_hours()`: per hour, how many finished check-ins of the last 8 weeks covered it; only for places with ≥ 15 check-ins, so new places (Mokko, Sheker, Canteen) show it only once real check-ins exist. This also gives the Canteen "lunch rush" warning, from data instead of a guess |
+| Tell me when a seat is free | full cards | watched in this browser while OrynTap is open (no push server); ends after 3 h or at closing |
+| Wrong number? | cards (logged-in students) | `report_count()`: full / many free / closed, one per place per 10 min; admins see a 7-day summary on the Profile page; the numbers on cards are not changed |
+| QR poster | admin → QR code → Print poster | A4 page: big QR code, short text in Kazakh, Russian and English |
+| E-mail texts | `docs/email-templates/` | confirmation and reset e-mails in Kazakh, Russian and English (paste into Supabase) |
+
+Not done: map pins for Mokko and Sheker. The floor plan (and aitumap) shows only Block C1; a plan of the C1–C2–C3 passages is needed to place them.
+
 ## 7. Project structure
 
 ```
@@ -212,8 +231,11 @@ docs/ERD.md                ER diagram + normalisation example
 | Open Space | 70 | 55 | approximate |
 | Coworking | 180 | 25 | approximate |
 | Coffeelake | 45 | 11 | **exact** (shown without "~", `counts_exact = true`) |
+| Mokko (coffee shop, between Blocks C2 and C3, opposite the wardrobe) | ~10 | 0 (not counted yet) | rough estimate |
+| Sheker (coffee shop, between Blocks C1 and C2, opposite the wardrobe) | ~10 | 0 (not counted yet) | rough estimate |
+| Canteen (Block C1.3, dining hall) | ~100 | 0 (not counted yet) | rough estimate ("at least 100") |
 
-AITU Library hours come from the sign on the library door: Mon–Fri 09:00–22:00, Sat 09:00–17:00, Sun 10:00–15:00. The hours for Open Space, Coworking and Coffeelake, and Coffeelake's location ("Block C1, 1st floor"), are our guesses. Fix them with the admin **Edit** button, or in `database/generate_seed.py`.
+AITU Library hours come from the sign on the library door: Mon–Fri 09:00–22:00, Sat 09:00–17:00, Sun 10:00–15:00. The hours for Open Space, Coworking and Coffeelake, and Coffeelake's location ("Block C1, 1st floor"), are our guesses. Mokko, Sheker and Canteen: only Mon–Fri 09:00–20:00 is confirmed; Saturday/Sunday hours, outlets and exact seats are left for an admin to fill in, so on weekends they show as closed until then. Mokko and Sheker have no pin on the live floor plan, because the plan only shows Block C1 (Canteen's pin is on the C1.3 dining hall). Fix all of this with the admin **Edit** button, or in `database/generate_seed.py`.
 
 **NU, MNU, ENU:** the spaces come from the universities' official pages (NU Library 24/7 rooms and Blocks D1/D5; the MNU Public Library, Zebra, the Shaikenov Atrium, the Team Talk Room and Pesochnica; the ENU Scientific Library, the Electronic Reading Room, the American Corner/Maker Space and the Student House coworking). **Their seat and outlet counts and some opening hours are estimates.**
 
@@ -227,8 +249,11 @@ Every file the site shows is ours, or is used under a licence we have checked. N
 | Favicon | `assets/img/favicon.svg` | SVG | 0.2 KB | own work |
 | Interface icons (home, map, heart, user, bell, play, close, pin) | inline SVG in `js/app.js` | SVG | < 1 KB each | own work |
 | Space illustrations (16) | `assets/img/cover-*.svg`, `fallback-*.svg` | SVG | 2–10 KB | own work, drawn by `database/generate_seed.py` |
-| AITU Library photo | `assets/img/aitu-library-460.webp` | WebP q80 | 13.4 KB | team photo (original in `media-src/`) |
-| AITU Open Space photo | `assets/img/aitu-open-space-460.webp` | WebP q80 | 20.1 KB | team photo (original in `media-src/`) |
+| AITU Library photo | `assets/img/aitu-library-480.webp`, `-960.webp` | WebP q80 | 18.6 / 58.2 KB | team photo, Nov 2026 (original in `media-src/`) |
+| Coffeelake photo | `assets/img/aitu-coffeelake-480.webp`, `-960.webp` | WebP q80 | 23.2 / 75.6 KB | team photo, Nov 2026 (original in `media-src/`) |
+| Coworking photo | `assets/img/aitu-coworking-480.webp`, `-960.webp` | WebP q80 | 14.7 / 47.0 KB | team photo, Nov 2026 (original in `media-src/`) |
+| Mokko, Sheker, Canteen photos | `assets/img/aitu-{mokko,sheker,canteen}-480/960.webp` | WebP q80 | 24–26 / 67–101 KB | team photos, Nov 2026 (originals in `media-src/`) |
+| AITU Open Space photo | `assets/img/aitu-open-space-480.webp`, `-960.webp` | WebP q80 | 18.9 / 70.5 KB | team photo, Nov 2026, straightened (verticals) and lightly corrected for contrast (original in `media-src/`). The old `aitu-open-space-460.webp` can be deleted after `10_improvements.sql` has run |
 | AITU floor plan | `assets/img/aitu-map.webp` | WebP q85 | 31.9 KB | from aitumap by Yuujiso (MIT licence), attribution kept |
 | How-to video (check-in) | `assets/media/howto-checkin.mp4` | MP4, H.264, no audio, 1280×720, 30 fps | 292 KB, 14 s | own screen recording of OrynTap |
 | Video captions | `assets/media/howto-checkin.{en,ru,kk}.vtt` | WebVTT | < 1 KB each | own work |

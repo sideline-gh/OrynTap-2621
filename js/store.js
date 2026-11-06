@@ -50,9 +50,19 @@
       // An error from an e-mail confirmation link comes back in the URL.
       const params = new URLSearchParams(location.hash.replace(/^#/, "") + "&" + location.search.replace(/^\?/, ""));
       const err = params.get("error_description");
-      if (err) {
+      // Password reset links come back with ?reset=1 (see requestPasswordReset)
+      const isReset = new URLSearchParams(location.search).get("reset") === "1";
+      if (isReset) {
+        history.replaceState(null, "", location.pathname + (err ? "#/profile" : location.hash));
+        if (err) this.pendingReset = "expired";
+        else if (params.get("type") === "recovery" && params.get("access_token")) this.pendingReset = "ok";
+      } else if (err) {
         history.replaceState(null, "", location.pathname + "#/profile");
-        this.pendingError = /database error/i.test(err) ? T("err_only_uni") : decodeURIComponent(err.replace(/\+/g, " "));
+        // A confirmation link that has expired or was already used: offer a new one (app.js)
+        if (params.get("error_code") === "otp_expired" || /invalid or has expired/i.test(err)) this.pendingVerify = "expired";
+        else this.pendingError = /database error/i.test(err) ? T("err_only_uni") : decodeURIComponent(err.replace(/\+/g, " "));
+      } else if (params.get("type") === "signup" && params.get("access_token")) {
+        this.justConfirmed = true;   // came back from the link in the confirmation e-mail
       }
       await this.getUniversities();
     }
@@ -86,7 +96,13 @@
     }
     async signIn(email, password) {
       const { error } = await this.sb.auth.signInWithPassword({ email: email.trim(), password });
-      if (error) throw new Error(error.message === "Invalid login credentials" ? T("err_wrong_login") : error.message);
+      if (error) {
+        // Supabase refuses to log in an account whose e-mail is not confirmed yet
+        if (error.code === "email_not_confirmed" || /email not confirmed/i.test(error.message || "")) {
+          const e = new Error(T("err_not_confirmed")); e.code = "email_not_confirmed"; throw e;
+        }
+        throw new Error(error.message === "Invalid login credentials" ? T("err_wrong_login") : error.message);
+      }
       return this.getSession();
     }
     async signUp({ email, password, first_name, last_name }) {
@@ -99,9 +115,36 @@
           emailRedirectTo: location.origin + location.pathname,
         },
       });
-      if (error) throw new Error(/database error/i.test(error.message) ? T("err_only_uni") : error.message);
-      if (!data.session) return { needsConfirmation: true };
+      if (error) {
+        if (error.code === "user_already_exists" || /already registered/i.test(error.message || "")) throw new Error(T("err_exists"));
+        if (error.status === 429 || error.code === "over_email_send_rate_limit") throw new Error(T("err_resend_wait"));
+        throw new Error(/database error/i.test(error.message) ? T("err_only_uni") : error.message);
+      }
+      // With "Confirm email" on, an e-mail that already has a confirmed account comes back as a user
+      // with no identities and no e-mail is sent: say so instead of waiting for a link that never comes.
+      if (data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) throw new Error(T("err_exists"));
+      if (!data.session) return { needsConfirmation: true, email: email.trim().toLowerCase() };
       return this.getSession();
+    }
+    // A new confirmation e-mail (the old link stops working). Supabase allows one per address every 60 s.
+    async resendConfirmation(email) {
+      const { error } = await this.sb.auth.resend({
+        type: "signup", email: email.trim(), options: { emailRedirectTo: location.origin + location.pathname },
+      });
+      if (error) throw new Error(error.status === 429 || /rate limit|security purposes|seconds/i.test(error.message || "") ? T("err_resend_wait") : error.message);
+    }
+    // Forgot password: Supabase e-mails a one-time link (same rate limit as above). For privacy the
+    // answer is the same whether or not an account with this e-mail exists.
+    async requestPasswordReset(email) {
+      const { error } = await this.sb.auth.resetPasswordForEmail(email.trim(), {
+        redirectTo: location.origin + location.pathname + "?reset=1",
+      });
+      if (error) throw new Error(error.status === 429 || /rate limit|security purposes|seconds/i.test(error.message || "") ? T("err_resend_wait") : error.message);
+    }
+    async updatePassword(password) {
+      const pErr = validatePassword(password); if (pErr) throw new Error(pErr);
+      const { error } = await this.sb.auth.updateUser({ password });
+      if (error) throw new Error(/different from the old/i.test(error.message || "") ? T("err_pw_same") : error.message);
     }
     async signOut() { await this.sb.auth.signOut(); }
     async updateProfile(id, patch) {
@@ -131,6 +174,27 @@
     async leave(checkInId) {
       const { error } = await this.sb.from("check_ins").update({ left_at: new Date().toISOString() }).eq("id", checkInId);
       if (error) throw error;
+    }
+    // +1 hour, at most 3 h ahead and never past closing time (database/10_improvements.sql)
+    async extendCheckIn(checkInId) {
+      const { data, error } = await this.sb.rpc("extend_check_in", { p_id: checkInId });
+      if (error) throw new Error(/cannot_extend/.test(error.message || "") ? T("ext_max") : /no_active/.test(error.message || "") ? T("checkin_ended") : error.message);
+      return new Date(data).toISOString();
+    }
+    // "Usually busy": finished check-ins per hour of the day, last 8 weeks (aggregates only)
+    async getBusyHours(universityId) {
+      const { data, error } = await this.sb.rpc("space_busy_hours", { p_university: universityId });
+      if (error) return [];   // before 10_improvements.sql is run: simply no hint
+      return data;
+    }
+    async reportCount(spaceId, kind, shownFree) {
+      const { error } = await this.sb.rpc("report_count", { p_space: spaceId, p_kind: kind, p_shown_free: shownFree });
+      if (error) throw new Error(/too_soon/.test(error.message || "") ? T("rep_too_soon") : /own_university/.test(error.message || "") ? T("err_own_uni") : /not_verified/.test(error.message || "") ? T("err_not_confirmed") : error.message);
+    }
+    async adminCountReports() {
+      const { data, error } = await this.sb.rpc("admin_count_reports");
+      if (error) throw error;
+      return data;
     }
     async getFavourites() {
       const { data, error } = await this.sb.from("favourites").select("space_id");
@@ -338,14 +402,63 @@
       const user = this.db.users.find(u => u.id === userId), space = this.seed.spaces.find(s => s.id === spaceId);
       if (!user || !space || user.university_id !== space.university_id) throw new Error(T("err_own_uni"));
       for (const c of this.db.checkins) if (c.user_id === userId && !c.left_at) c.left_at = new Date(Math.min(now, Date.parse(c.expires_at))).toISOString();
+      const close = App.closingTime(this.spaceRow(space), now);   // ends at closing time at the latest
+      const until = Math.min(now + Math.min(3, Math.max(0.25, hours)) * HOUR, close || Infinity);
       const c = { id: now, user_id: userId, space_id: spaceId, uses_outlet: !!usesOutlet,
-        started_at: new Date(now).toISOString(), expires_at: new Date(now + Math.min(3, Math.max(0.25, hours)) * HOUR).toISOString(), left_at: null };
+        started_at: new Date(now).toISOString(), expires_at: new Date(until).toISOString(), left_at: null };
       this.db.checkins.push(c); this.db.activity[spaceId] = now; this.save(this.db);
       return c;
     }
     async leave(checkInId) {
       const c = this.db.checkins.find(x => x.id === checkInId);
       if (c && !c.left_at) { c.left_at = new Date().toISOString(); this.db.activity[c.space_id] = Date.now(); this.save(this.db); }
+    }
+    async extendCheckIn(checkInId) {   // same rules as extend_check_in() in the database
+      const now = Date.now(), c = this.db.checkins.find(x => x.id === checkInId);
+      if (!c || c.left_at || Date.parse(c.expires_at) <= now) throw new Error(T("checkin_ended"));
+      const space = this.seed.spaces.find(s => s.id === c.space_id);
+      const close = App.closingTime(this.spaceRow(space), now);
+      const next = Math.min(Date.parse(c.expires_at) + HOUR, now + 3 * HOUR, close || Infinity);
+      if (next < Date.parse(c.expires_at) + MIN) throw new Error(T("ext_max"));
+      c.expires_at = new Date(next).toISOString(); this.db.activity[c.space_id] = now; this.save(this.db);
+      return c.expires_at;
+    }
+    async getBusyHours(universityId) {   // from the same generated history as the database
+      if (!window.ORYNTAP_DEMO_HISTORY) await loadScript("js/demo-history.js");
+      const now = Date.now(), today = Math.floor((now + 5 * HOUR) / (24 * HOUR)) * 24 * HOUR - 5 * HOUR;
+      const mine = new Set(this.seed.spaces.filter(s => s.university_id === universityId).map(s => s.id));
+      const by = {}, n = {};
+      for (const [space, d, hm, , stayed] of window.ORYNTAP_DEMO_HISTORY) {
+        if (!mine.has(space) || d > 56) continue;
+        const [h, m] = hm.split(":").map(Number), start = today - d * 24 * HOUR + (h * 60 + m) * MIN, end = start + stayed * MIN;
+        if (end > now) continue;
+        n[space] = (n[space] || 0) + 1;
+        for (let t = Math.floor((start + 5 * HOUR) / HOUR) * HOUR - 5 * HOUR; t < end; t += HOUR) {
+          const hour = new Date(t + 5 * HOUR).getUTCHours(), k = space + ":" + hour; by[k] = (by[k] || 0) + 1;
+        }
+      }
+      return Object.entries(by).filter(([k]) => n[+k.split(":")[0]] >= 15).map(([k, v]) => {
+        const [space_id, hour_of_day] = k.split(":").map(Number); return { space_id, hour_of_day, presence: v, check_ins: n[space_id] };
+      });
+    }
+    async reportCount(spaceId, kind, shownFree) {
+      const u = this.currentUser(), space = this.seed.spaces.find(s => s.id === spaceId);
+      if (!u || !space || u.university_id !== space.university_id) throw new Error(T("err_own_uni"));
+      this.db.reports = this.db.reports || [];
+      if (this.db.reports.some(r => r.user_id === u.id && r.space_id === spaceId && Date.now() - r.at < 10 * MIN)) throw new Error(T("rep_too_soon"));
+      this.db.reports.push({ user_id: u.id, space_id: spaceId, kind, shown_free: shownFree, at: Date.now() });
+      this.save(this.db);
+    }
+    async adminCountReports() {
+      const u = this.currentUser(); if (!u || u.role !== "admin") return [];
+      const by = {};
+      for (const r of this.db.reports || []) {
+        const s = this.seed.spaces.find(x => x.id === r.space_id);
+        if (!s || s.university_id !== u.university_id || Date.now() - r.at > 7 * 24 * HOUR) continue;
+        const row = by[s.id] = by[s.id] || { space_id: s.id, space_name: this.spaceRow(s).name, full_n: 0, empty_n: 0, closed_n: 0, last_at: 0 };
+        row[r.kind + "_n"] += 1; row.last_at = Math.max(row.last_at, r.at);
+      }
+      return Object.values(by).sort((a, b) => b.last_at - a.last_at).map(r => ({ ...r, last_at: new Date(r.last_at).toISOString() }));
     }
     async getFavourites() {
       const u = this.currentUser(); if (!u) return [];

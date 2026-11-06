@@ -12,6 +12,7 @@
   const LS = {
     get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} },
+    del(k) { try { localStorage.removeItem(k); } catch (e) {} },
   };
 
   // ---------------- icons ----------------
@@ -67,6 +68,18 @@
     }
     return { state: "closed", label: t("st_closed"), detail: t("temp_closed") };
   }
+  // Closing time today (ms) if the place is open now; null if it is closed now or open around the
+  // clock. A check-in never lasts past it (same rule as closing_time() in the database).
+  function closingTime(space, now = Date.now()) {
+    const hours = space.hours || [];
+    if (hours.length === 7 && hours.every(h => hhmm(h.opens) === "00:00" && h.closes.startsWith("24"))) return null;
+    const { wd, min } = astana(now);
+    const h = hours.find(x => x.weekday === wd); if (!h) return null;
+    const o = toMin(h.opens), c = toMin(h.closes);
+    if (min < o || min >= c || c >= 24 * 60) return null;
+    return now - (now % MIN) + (c - min) * MIN;
+  }
+  const clock = (ms) => { const d = new Date(ms + TZ_OFFSET); return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`; };
   function agoText(iso) {
     const m = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / MIN));
     if (m < 1) return t("just_now");
@@ -80,16 +93,21 @@
     return h ? t("fmt_hm", { h, m: String(m).padStart(2, "0") }) : `${m}:${String(ss).padStart(2, "0")}`;
   };
 
-  window.App = { statusOf };
+  window.App = { statusOf, closingTime };
 
   // ---------------- state ----------------
   const state = {
     store: null, unis: [], uniId: LS.get("oryntap.uni", null),
     spaces: [], favSpaces: [], session: null, active: null, favs: new Set(),
     filters: new Set(LS.get("oryntap.filters", [])),
-    route: "home", editing: false, authMode: "login", loading: true,
-    drafts: {},   // what the user typed in the sign-up / login / profile forms (see keepForms)
+    route: "home", editing: false, authMode: LS.get("oryntap.verify", null) ? "verify" : "login", loading: true,
+    drafts: {},   // (verify step: see showVerify)
+    verify: LS.get("oryntap.verify", null),   // {email} while an account waits for e-mail confirmation   // what the user typed in the sign-up / login / profile forms (see keepForms)
     offlineSince: null, pomodoro: null, sensor: {}, sound: LS.get("oryntap.sound", false),
+    sortBest: LS.get("oryntap.sortBest", false),   // "Best right now" order on Home
+    watch: LS.get("oryntap.watch", {}),            // {spaceId: until (ms)}: tell me when a seat is free
+    busy: {}, busyOpen: new Set(),                 // "usually busy" data per university
+    recovery: sessionStorage.getItem("oryntap.recovery") === "1",   // came from a password reset link
   };
   const isAdmin = () => state.session && state.session.profile.role === "admin";
   const uni = () => state.unis.find(u => u.id === state.uniId);
@@ -188,6 +206,7 @@
         state.session ? st.getActiveCheckIn() : null,
         state.session && !isAdmin() ? st.getFavourites() : [],
         st.getSensorNow ? st.getSensorNow().catch(() => ({})) : {},
+        loadBusy(state.uniId),
       ]);
       state.spaces = spaces; state.active = active; state.favs = new Set(favs); state.sensor = sensor || {};
       // Name of the place where the student is checked in, even if it is not in the current list
@@ -196,6 +215,7 @@
       }
       state.favSpaces = state.route === "favourites" && favs.length ? await st.getSpacesByIds(favs) : state.favSpaces.filter(s => favs.includes(s.id));
       state.offlineSince = null;
+      checkWatch();
       LS.set(cacheKey(), { at: Date.now(), spaces });
     } catch (e) {
       console.warn("[OrynTap] refresh failed", e);
@@ -204,6 +224,7 @@
       else if (!state.spaces.length) toast(t("cant_load"), true);
     }
     state.loading = false;
+    if (state.session && state.verify) setVerify(null);
     paintUniPicker();
     // A form on screen (sign-up, login, profile) shows no live data, so a background refresh only
     // updates the header and the menu. Re-rendering would rebuild the inputs and, on phones, close
@@ -273,12 +294,21 @@
     const s = state.spaces.find(x => x.id === a.space_id) || state.favSpaces.find(x => x.id === a.space_id) || (state.activeSpace && state.activeSpace.id === a.space_id ? state.activeSpace : null);
     const name = s ? s.name : t("your_space");
     const p = state.pomodoro;
-    return `<section class="session" aria-label="${esc(t("aria_session"))}">
+    const exp = Date.parse(a.expires_at), now = Date.now();
+    const close = s ? closingTime(s, now) : null;
+    const atClose = close && Math.abs(exp - close) < MIN;
+    // Extend 1 h: at most 3 h ahead and never past closing time (the database checks the same)
+    const next = Math.min(exp + HOUR, now + 3 * HOUR, close || Infinity);
+    const canExtend = next >= exp + MIN;
+    const ending = exp - now <= 10 * MIN;
+    return `<section class="session${ending ? " ending" : ""}" aria-label="${esc(t("aria_session"))}">
       <div>
         <h2>${esc(t("studying_at", { n: name }))}</h2>
-        <p>${t("ends_in", { t: `<span class="timer" data-until="${esc(a.expires_at)}">${fmtLeft(Date.parse(a.expires_at) - Date.now())}</span>` })}${a.uses_outlet ? esc(t("with_outlet")) : ""}${p ? ` · ${esc(t(p.phase === "focus" ? "focus" : "brk"))} <span class="timer" data-pomo>${fmtLeft(p.until - Date.now())}</span>` : ""}</p>
+        <p>${t("ends_in", { t: `<span class="timer" data-until="${esc(a.expires_at)}">${fmtLeft(exp - now)}</span>` })}${atClose ? esc(t("at_closing", { t: clock(close) })) : ""}${a.uses_outlet ? esc(t("with_outlet")) : ""}${p ? ` · ${esc(t(p.phase === "focus" ? "focus" : "brk"))} <span class="timer" data-pomo>${fmtLeft(p.until - Date.now())}</span>` : ""}</p>
+        ${ending ? `<p class="ending-note" role="status">${esc(t(canExtend ? "ending_note" : "ending_note_noext"))}</p>` : ""}
       </div>
       <div class="actions">
+        <button class="btn small" data-act="extend" ${canExtend ? "" : `disabled title="${esc(t(atClose || (close && next >= close) ? "ext_closing" : "ext_max"))}"`}>${esc(t("btn_extend"))}</button>
         <button class="btn small" data-act="pomodoro">${esc(t(p ? "pomo_stop" : "pomo_start"))}</button>
         ${p ? `<button class="btn small" data-act="sound" aria-pressed="${state.sound}">${state.sound ? I.bell : I.bellOff}${esc(t(state.sound ? "sound_on" : "sound_off"))}</button>` : ""}
         <button class="btn small primary" data-act="leave">${esc(t("btn_leave"))}</button>
@@ -348,14 +378,14 @@
         <div class="meter" aria-hidden="true"><i style="width:${Math.min(100, pct)}%"></i></div>
       </div>`;
   }
-  function factList(s) {
+  function factList(s, extra = "") {
     const a = approx(s);
     const tags = [];
     if (s.is_quiet) tags.push(t("tag_quiet"));
     if (s.group_work) tags.push(t("tag_group"));
     if (s.food_allowed) tags.push(t("tag_food"));
     return `<div class="stats">${stat(s.free_seats, s.seat_capacity, t("free_seats"), a)}${stat(s.free_outlets, s.outlet_capacity, t("free_outlets"), a)}</div>
-      ${tags.length ? `<ul class="tags">${tags.map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}`;
+      ${tags.length || extra ? `<div class="facts-row">${tags.length ? `<ul class="tags">${tags.map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}${extra}</div>` : ""}`;
   }
   // A logged-in student may check in only at their own university (also enforced by RLS)
   const otherUni = (s) => state.session && !isAdmin() && s.university_id !== state.session.profile.university_id;
@@ -411,6 +441,73 @@
     el.outerHTML = occupancyPanel();
   }
 
+  // "Usually busy": how many past check-ins (last 8 weeks) covered each hour of the day. Loaded
+  // once per university and kept for 30 min. Shown only for places with at least 15 check-ins.
+  async function loadBusy(uniId) {
+    const st = state.store, c = state.busy[uniId];
+    if (!st.getBusyHours || (c && Date.now() - c.at < 30 * MIN)) return;
+    const rows = await st.getBusyHours(uniId).catch(() => null);
+    if (!rows) return;
+    const by = {};
+    rows.forEach(r => { (by[r.space_id] = by[r.space_id] || { n: Number(r.check_ins), h: {} }).h[r.hour_of_day] = Number(r.presence); });
+    state.busy[uniId] = { at: Date.now(), by };
+  }
+  const BUSY_HOURS = Array.from({ length: 15 }, (_, i) => i + 8);   // 08:00–22:00, like the admin chart
+  function busyInfo(s) {
+    const b = (state.busy[s.university_id] || {}).by; const d = b && b[s.id]; if (!d) return null;
+    const max = Math.max(0, ...BUSY_HOURS.map(h => d.h[h] || 0)); if (!max) return null;
+    const peak = BUSY_HOURS.reduce((a, h) => ((d.h[h] || 0) > (d.h[a] || 0) ? h : a), BUSY_HOURS[0]);
+    let from = peak, to = peak + 1;                       // busiest stretch: hours within 85 % of the peak
+    while (from > 8 && (d.h[from - 1] || 0) >= 0.85 * max) from--;
+    while (to < 23 && (d.h[to] || 0) >= 0.85 * max) to++;
+    const hour = Math.floor(astana().min / 60);
+    return { d, max, from, to, n: d.n, now: hour >= from && hour < to, soon: hour === from - 1 };
+  }
+  function busyLine(s, st) {
+    const b = busyInfo(s); if (!b) return "";
+    const range = `${String(b.from).padStart(2, "0")}:00–${String(b.to).padStart(2, "0")}:00`;
+    const open = st.state !== "closed";
+    const txt = open && b.now ? t("busy_now", { r: range }) : open && b.soon ? t("busy_soon", { t: `${String(b.from).padStart(2, "0")}:00` }) : t("busy_usual", { r: range });
+    const hot = open && (b.now || b.soon);
+    return `<details class="busy" data-id="${s.id}"${state.busyOpen.has(s.id) ? " open" : ""}>
+        <summary><span class="${hot ? "hot" : ""}">${esc(txt)}</span></summary>
+        <div class="bars" aria-hidden="true">${BUSY_HOURS.map(h => `<span class="${h >= b.from && h < b.to ? "pk" : ""}" style="height:${Math.round(((b.d.h[h] || 0) / b.max) * 100)}%"></span>`).join("")}</div>
+        <div class="bar-labels" aria-hidden="true">${BUSY_HOURS.map(h => `<span>${h % 2 ? "" : h}</span>`).join("")}</div>
+        <p class="busy-src">${esc(t("busy_src", { n: b.n }))}</p>
+      </details>`;
+  }
+  document.addEventListener("toggle", (e) => {
+    const d = e.target; if (!d.classList || !d.classList.contains("busy")) return;
+    const id = Number(d.dataset.id); d.open ? state.busyOpen.add(id) : state.busyOpen.delete(id);
+  }, true);
+
+  // "Tell me when a seat is free" (only while OrynTap is open: there is no push server)
+  function watching(id) { const u = state.watch[id]; return !!u && u > Date.now(); }
+  function toggleWatch(space) {
+    if (watching(space.id)) { delete state.watch[space.id]; LS.set("oryntap.watch", state.watch); toast(t("watch_off", { n: space.name })); render(); return; }
+    if ("Notification" in window && Notification.permission === "default") { try { Notification.requestPermission(); } catch (e) {} }
+    state.watch[space.id] = Math.min(Date.now() + 3 * HOUR, closingTime(space) || Infinity);
+    LS.set("oryntap.watch", state.watch); toast(t("watch_on", { n: space.name })); render();
+  }
+  function checkWatch() {
+    let changed = false;
+    for (const [id, until] of Object.entries(state.watch)) {
+      const s = state.spaces.find(x => x.id === Number(id)) || state.favSpaces.find(x => x.id === Number(id));
+      if (until <= Date.now()) { delete state.watch[id]; changed = true; continue; }
+      if (s && s.free_seats > 0 && statusOf(s).state !== "closed") {
+        delete state.watch[id]; changed = true;
+        notify(t("watch_free", { n: s.name, f: approx(s) + s.free_seats }));
+      }
+    }
+    if (changed) LS.set("oryntap.watch", state.watch);
+  }
+
+  // Team photos exist as <name>-480.webp and <name>-960.webp (tools/optimise_images.py). The browser
+  // takes the 960 px file only for high-resolution screens; the card size and crop do not change.
+  function photoSrcset(url) {
+    const m = /^(.*)-480\.webp$/.exec(url || ""); if (!m) return "";
+    return ` srcset="${esc(m[1])}-480.webp 480w, ${esc(m[1])}-960.webp 960w" sizes="(max-width: 720px) calc(100vw - 48px), 300px"`;
+  }
   function card(s, opts = {}) {
     const st = statusOf(s);
     const here = state.active && state.active.space_id === s.id;
@@ -428,11 +525,17 @@
       actions = `<button class="btn small" disabled>${esc(t("only_uni", { u: uniShort(s.university_id) }))}</button>`;
     } else {
       actions = `<button class="btn small ${st.state === "closed" ? "" : "primary"}" data-act="checkin" data-id="${s.id}" ${st.state === "closed" ? "disabled" : ""}>${esc(t(st.state === "closed" ? "btn_closed" : state.session ? "btn_checkin" : "btn_checkin_login"))}</button>`;
+      if (s.free_seats === 0 && st.state !== "closed") {
+        const on = watching(s.id);
+        actions += `<button class="btn small" data-act="watch" data-id="${s.id}" aria-pressed="${on}">${on ? I.bell : I.bellOff}${esc(t(on ? "watch_btn_on" : "watch_btn"))}</button>`;
+      }
     }
+    // "Wrong number?": a logged-in student tells the admins what they really see there
+    if (state.session && !isAdmin() && !otherUni(s)) actions += `<button class="btn link rep-btn" data-act="report" data-id="${s.id}">${esc(t("rep_btn"))}</button>`;
     const uniTag = opts.showUni ? `<p class="uni-tag">${esc((state.unis.find(u => u.id === s.university_id) || {}).name || "")}</p>` : "";
     return `<article class="card" id="space-${s.id}">
       <figure class="photo-wrap">
-        <img class="photo" src="${esc(s.image_url)}" alt="${esc(s.image_alt || "")}" width="640" height="400" decoding="async" ${opts.first ? 'fetchpriority="high"' : 'loading="lazy"'}
+        <img class="photo" src="${esc(s.image_url)}"${photoSrcset(s.image_url)} alt="${esc(s.image_alt || "")}" width="640" height="400" decoding="async" ${opts.first ? 'fetchpriority="high"' : 'loading="lazy"'}
              onerror="this.onerror=null;this.src='assets/img/fallback-${esc(s.kind)}.svg';var c=this.nextElementSibling;if(c)c.remove()">
         ${s.image_credit ? `<figcaption class="credit">${esc(t("photo", { c: s.image_credit }))}</figcaption>` : ""}
       </figure>
@@ -444,7 +547,7 @@
         <p class="status"><span class="st ${st.state}">${esc(st.label)}</span><span class="sep" aria-hidden="true"></span><span>${esc(st.detail)}</span><span class="upd">${esc(ago(s.updated_at))}</span></p>
         ${where ? `<p class="where">${I.pin}<span>${esc(where)}</span></p>` : ""}
         ${sensorLine(s)}
-        ${factList(s)}
+        ${factList(s, busyLine(s, st))}
         <div class="card-actions">${actions}</div>
       </div>
     </article>`;
@@ -457,10 +560,20 @@
     { k: "food", label: "f_food", test: s => s.food_allowed },
     { k: "open", label: "f_open", test: s => statusOf(s).state !== "closed" },
   ];
+  // "Best right now": half free seats, a quarter free outlets, a quarter how long it stays open
+  // (up to 4 h; 24/7 places count as 4 h). Closed places always go last.
+  function bestScore(s) {
+    const seats = s.seat_capacity ? s.free_seats / s.seat_capacity : 0;
+    const outlets = s.outlet_capacity ? s.free_outlets / s.outlet_capacity : 0;
+    const close = closingTime(s);
+    const open = close == null ? 4 * HOUR : close - Date.now();
+    return 0.5 * seats + 0.25 * outlets + 0.25 * Math.min(1, open / (4 * HOUR));
+  }
   const title = (key, accentKey) => `<h1 class="page-title">${t(key, { a: `<span class="accent">${esc(t(accentKey))}</span>` })}</h1>`;
 
   function viewHome() {
-    const chips = FILTERS.map(f => `<button class="chip" data-filter="${f.k}" aria-pressed="${state.filters.has(f.k)}">${esc(t(f.label))}</button>`).join("");
+    const chips = `<button class="chip sort-chip" data-act="sort-best" aria-pressed="${state.sortBest}">${esc(t("sort_best"))}</button><span class="chip-sep" aria-hidden="true"></span>`
+      + FILTERS.map(f => `<button class="chip" data-filter="${f.k}" aria-pressed="${state.filters.has(f.k)}">${esc(t(f.label))}</button>`).join("");
     let body;
     if (state.loading) body = `<div class="skeleton"></div><div class="skeleton"></div>`;
     else {
@@ -468,7 +581,9 @@
       const order = { open: 0, soon: 1, closed: 2 };
       const here = (s) => (state.active && state.active.space_id === s.id ? 1 : 0);
       const list = state.spaces.filter(s => active.every(f => f.test(s)))
-        .sort((a, b) => here(b) - here(a) || order[statusOf(a).state] - order[statusOf(b).state] || (b.free_seats / b.seat_capacity) - (a.free_seats / a.seat_capacity));
+        .sort(state.sortBest
+          ? (a, b) => here(b) - here(a) || (statusOf(a).state === "closed") - (statusOf(b).state === "closed") || bestScore(b) - bestScore(a)
+          : (a, b) => here(b) - here(a) || order[statusOf(a).state] - order[statusOf(b).state] || (b.free_seats / b.seat_capacity) - (a.free_seats / a.seat_capacity));
       body = list.length ? `<div class="cards">${list.map((s, i) => card(s, { first: i === 0 })).join("")}</div>`
         : `<div class="empty"><h2>${esc(t("no_match"))}</h2><p>${esc(t("no_match_p"))}</p><button class="btn" data-act="clear-filters">${esc(t("clear_filters"))}</button></div>`;
     }
@@ -481,6 +596,7 @@
       ${sessionBanner()}
       ${state.loading ? "" : occupancyPanel()}
       <div class="chips" role="group" aria-label="${esc(t("filters"))}">${chips}</div>
+      ${state.sortBest ? `<p class="sort-note">${esc(t("sort_best_note"))}</p>` : ""}
       ${body}`;
   }
 
@@ -528,6 +644,30 @@
       const demoHint = state.store.mode === "demo" ? `<p class="hint">${esc(t("demo_hint"))}</p>` : "";
       const next = sessionStorage.getItem("oryntap.afterLabel");
       const afterHint = next ? `<p class="hint">${esc(next)}</p>` : "";
+      if (state.authMode === "verify") {
+        const v = state.verify || {};
+        return `<form class="box auth-box" id="verifyForm" data-keep="verify" novalidate>
+          <h2>${esc(t("verify_title"))}</h2>
+          <p class="form-error" id="formErr" role="alert">${esc(state.verifyMsg || "")}</p>
+          <p>${v.email ? esc(t("verify_sent", { e: v.email })) : esc(t("verify_enter"))}</p>
+          <label class="field"><span class="sr-only">${esc(t("uni_email"))}</span><input class="input" name="email" type="email" value="${esc(v.email || "")}" placeholder="${esc(ph)}" autocomplete="email" required></label>
+          <p class="hint">${esc(t("verify_hint"))}</p>
+          <button class="btn primary block" type="submit" id="resendBtn">${esc(t("verify_resend"))}</button>
+          <p class="auth-alt"><button type="button" class="btn link" data-act="verify-login">${esc(t("verify_login"))}</button> · <button type="button" class="btn link" data-act="verify-change">${esc(t("verify_change"))}</button></p>
+        </form>`;
+      }
+      if (state.authMode === "forgot") {
+        return `<form class="box auth-box" id="forgotForm" data-keep="forgot" novalidate>
+          <h2>${esc(t("forgot_title"))}</h2>
+          <p class="form-error" id="formErr" role="alert">${esc(state.forgotErr || "")}</p>
+          <p class="form-ok" id="formOk" role="status">${esc(state.forgotOk || "")}</p>
+          <p>${esc(t("forgot_lead"))}</p>
+          <label class="field"><span class="sr-only">${esc(t("uni_email"))}</span><input class="input" name="email" type="email" placeholder="${esc(ph)}" autocomplete="email" required></label>
+          <button class="btn primary block" type="submit" id="forgotBtn">${esc(t("forgot_send"))}</button>
+          <p class="auth-alt"><button type="button" class="btn link" data-act="auth-mode" data-mode="login">${esc(t("forgot_back"))}</button></p>
+          ${demoHint}
+        </form>`;
+      }
       if (state.authMode === "signup") {
         return `<form class="box auth-box" id="signupForm" data-keep="signup" novalidate>
           <h2>${esc(t("signup"))}</h2>
@@ -550,12 +690,24 @@
         <label class="field"><span class="sr-only">${esc(t("uni_email"))}</span><input class="input" name="email" type="email" placeholder="${esc(ph)}" autocomplete="username" required></label>
         <label class="field"><span class="sr-only">${esc(t("password"))}</span><input class="input" name="password" type="password" placeholder="${esc(t("password"))}" autocomplete="current-password" required></label>
         <button class="btn primary block" type="submit">${esc(t("login"))}</button>
+        <p class="auth-alt forgot-alt"><button type="button" class="btn link" data-act="auth-mode" data-mode="forgot">${esc(t("forgot_link"))}</button></p>
         <p class="auth-alt">${esc(t("new_here"))} <button type="button" class="btn link" data-act="auth-mode" data-mode="signup">${esc(t("create_an_account"))}</button></p>
         ${demoHint}
       </form>`;
     }
     const p = s.profile, u = state.unis.find(x => x.id === p.university_id);
     const roleName = t(p.role === "admin" ? "role_admin" : "role_student");
+    if (state.recovery) {   // came from a password reset link: Supabase has logged the user in
+      return `<form class="box auth-box" id="newPwForm" novalidate>
+        <h2>${esc(t("newpw_title"))}</h2>
+        <p class="form-error" id="formErr" role="alert"></p>
+        <p>${esc(t("newpw_lead", { e: s.user.email }))}</p>
+        <label class="field"><span class="sr-only">${esc(t("newpw"))}</span><input class="input" name="password" type="password" placeholder="${esc(t("password_hint"))}" autocomplete="new-password" required minlength="8"></label>
+        <label class="field"><span class="sr-only">${esc(t("newpw2"))}</span><input class="input" name="password2" type="password" placeholder="${esc(t("newpw2"))}" autocomplete="new-password" required minlength="8"></label>
+        <button class="btn primary block" type="submit">${esc(t("newpw_save"))}</button>
+        <p class="auth-alt"><button type="button" class="btn link" data-act="newpw-later">${esc(t("newpw_later"))}</button></p>
+      </form>`;
+    }
     if (state.editing) {
       return `<form class="box profile-box" id="profileForm" data-keep="profile">
         <h2 style="margin-bottom:22px">${esc(p.first_name)} ${esc(p.last_name)}</h2>
@@ -587,6 +739,7 @@
       ${isAdmin() ? `<section class="box insights" id="insights"><h2>${esc(t("busiest"))}</h2><p class="muted">${esc(t("busiest_p"))}</p><div id="insightBody" class="skeleton" style="height:120px"></div>
         <h2 class="ins-h">${esc(t("ins_use"))}</h2><p class="muted">${esc(t("ins_use_p"))}</p><div id="insightUse" class="skeleton" style="height:90px"></div>
         <h2 class="ins-h">${esc(t("ins_stay"))}</h2><p class="muted">${esc(t("ins_stay_p"))}</p><div id="insightStay" class="skeleton" style="height:90px"></div>
+        <h2 class="ins-h">${esc(t("ins_rep"))}</h2><p class="muted">${esc(t("ins_rep_p"))}</p><div id="insightRep" class="skeleton" style="height:60px"></div>
         <p class="muted ins-src">${esc(t("ins_src"))}</p></section>` : ""}`;
   }
 
@@ -628,6 +781,14 @@
         <tbody>${rows.map(r => `<tr><td>${esc(t("hours_short", { h: r.planned_hours }))}</td><td>${r.check_ins}</td><td>${esc(t("ins_min", { m: r.avg_stay_min }))}</td><td>${r.pct_left_early}%</td><td>${r.pct_ended_by_itself}%</td></tr>`).join("")}</tbody></table>`
         : `<p class="muted">${esc(t("no_checkins"))}</p>`;
     } catch (e) { done(s); s.innerHTML = `<p class="muted">${esc(t("insights_fail"))}</p>`; }
+    const r = $("#insightRep"); if (!r || !state.store.adminCountReports) return;
+    try {
+      const rows = await state.store.adminCountReports();
+      done(r);
+      r.innerHTML = rows.length ? `<table class="stay-table"><thead><tr><th scope="col">${esc(t("ins_rep_place"))}</th><th scope="col">${esc(t("rep_full"))}</th><th scope="col">${esc(t("rep_empty"))}</th><th scope="col">${esc(t("rep_closed"))}</th><th scope="col">${esc(t("ins_rep_last"))}</th></tr></thead>
+        <tbody>${rows.map(x => `<tr><td>${esc(x.space_name)}</td><td>${x.full_n}</td><td>${x.empty_n}</td><td>${x.closed_n}</td><td>${esc(agoText(x.last_at))}</td></tr>`).join("")}</tbody></table>`
+        : `<p class="muted">${esc(t("ins_rep_none"))}</p>`;
+    } catch (e) { done(r); r.innerHTML = `<p class="muted">${esc(t("insights_fail"))}</p>`; }
   }
 
   function afterRender() {
@@ -635,8 +796,26 @@
     const lf = $("#loginForm"), sf = $("#signupForm"), pf = $("#profileForm");
     if (lf) lf.addEventListener("submit", onLogin);
     if (sf) sf.addEventListener("submit", onSignup);
+    const vf = $("#verifyForm"); if (vf) vf.addEventListener("submit", onResend);
+    const ff = $("#forgotForm"); if (ff) ff.addEventListener("submit", onForgot);
+    const nf = $("#newPwForm"); if (nf) nf.addEventListener("submit", onNewPassword);
     if (pf) pf.addEventListener("submit", onSaveProfile);
     if (state.store.pendingError) { toast(state.store.pendingError, true); state.store.pendingError = null; }
+    // Back from the confirmation e-mail: the link worked, or it had expired / was already used
+    if (state.store.justConfirmed) {
+      state.store.justConfirmed = false;
+      if (state.session) { setVerify(null); state.drafts = {}; toast(t("verified_ok")); }
+    }
+    // Back from a password reset e-mail
+    if (state.store.pendingReset) {
+      const r = state.store.pendingReset; state.store.pendingReset = null;
+      if (r === "ok" && state.session) { setRecovery(true); state.route = "profile"; history.replaceState(null, "", location.pathname + "#/profile"); render(); return; }
+      if (r === "expired") { state.authMode = "forgot"; state.forgotOk = ""; state.forgotErr = t("err_reset_expired"); state.route = "profile"; history.replaceState(null, "", location.pathname + "#/profile"); render(); return; }
+    }
+    if (state.store.pendingVerify === "expired") {
+      state.store.pendingVerify = null;
+      if (!state.session) { showVerify((state.verify || {}).email || "", t("err_link_expired")); return; }
+    }
   }
 
   // ---------------- actions ----------------
@@ -670,10 +849,13 @@
     try {
       await state.store.signIn(email, pw);
       toast(t("welcome_back"));
-      state.drafts = {};
+      state.drafts = {}; setVerify(null);
       state.uniId = null; await refresh();
       await continueAfterLogin();
-    } catch (err) { $("#formErr").textContent = err.message; }
+    } catch (err) {
+      if (err.code === "email_not_confirmed") { showVerify(email, err.message); return; }
+      $("#formErr").textContent = err.message;
+    }
     finally { btn.disabled = false; }
   }
   async function onSignup(e) {
@@ -685,13 +867,81 @@
       const res = await state.store.signUp(f);
       // Registered: the sign-up form has done its job. If the e-mail must be confirmed first,
       // the login form opens with the same e-mail already filled in.
-      delete state.drafts.signup;
-      if (res && res.needsConfirmation) { state.drafts.login = { email: f.email }; toast(t("confirm_email")); state.authMode = "login"; render(); return; }
+      if (res && res.needsConfirmation) {
+        // Not finished until the e-mail is confirmed: keep name and e-mail for "use a different e-mail"
+        if (state.drafts.signup) delete state.drafts.signup.password;
+        state.drafts.login = { email: f.email };
+        toast(t("confirm_email")); showVerify(res.email || f.email);
+        return;
+      }
       toast(t("account_created"));
-      state.drafts = {};
+      state.drafts = {}; setVerify(null);
       state.uniId = null; await refresh(); await continueAfterLogin();
     } catch (err) { $("#formErr").textContent = err.message; }
     finally { btn.disabled = false; }
+  }
+  function setVerify(v) { state.verify = v; v ? LS.set("oryntap.verify", v) : LS.del("oryntap.verify"); }
+  function showVerify(email, msg) {
+    setVerify({ email: String(email || "").trim().toLowerCase() });
+    delete state.drafts.verify;
+    // Can run while the app is still starting (back from an expired link): switch to the
+    // Profile page directly, so the verify step and its message are on screen.
+    state.authMode = "verify"; state.route = "profile"; state.editing = false;
+    if (location.hash !== "#/profile") history.replaceState(null, "", location.pathname + "#/profile");
+    state.verifyMsg = msg || "";   // kept in state: re-renders (start-up, refresh) must not wipe it
+    render();
+  }
+  async function onResend(e) {
+    e.preventDefault();
+    const btn = $("#resendBtn"), email = String(new FormData(e.target).get("email") || "").trim().toLowerCase();
+    if (!email) { $("#formErr").textContent = t("enter_email_pw"); return; }
+    if (!state.store.resendConfirmation) { $("#formErr").textContent = t("demo_no_mail"); return; }
+    btn.disabled = true;
+    try {
+      await state.store.resendConfirmation(email);
+      setVerify({ email }); state.verifyMsg = ""; $("#formErr").textContent = "";
+      toast(t("verify_resent", { e: email }));
+      // Supabase sends at most one e-mail per address every 60 s: count down on the button
+      let left = 60; btn.textContent = t("verify_wait", { n: left });
+      const timer = setInterval(() => {
+        left -= 1; const b = $("#resendBtn");
+        if (!b) return clearInterval(timer);
+        if (left <= 0) { clearInterval(timer); b.disabled = false; b.textContent = t("verify_resend"); }
+        else b.textContent = t("verify_wait", { n: left });
+      }, 1000);
+    } catch (err) { btn.disabled = false; $("#formErr").textContent = err.message; }
+  }
+  function setRecovery(on) { state.recovery = on; on ? sessionStorage.setItem("oryntap.recovery", "1") : sessionStorage.removeItem("oryntap.recovery"); }
+  async function onForgot(e) {
+    e.preventDefault();
+    const btn = $("#forgotBtn"), email = String(new FormData(e.target).get("email") || "").trim().toLowerCase();
+    state.forgotOk = ""; state.forgotErr = ""; $("#formOk").textContent = "";
+    if (!email) { $("#formErr").textContent = t("enter_email"); return; }
+    if (!state.store.requestPasswordReset) { $("#formErr").textContent = t("demo_no_mail"); return; }
+    btn.disabled = true;
+    try {
+      await state.store.requestPasswordReset(email);
+      state.forgotOk = t("forgot_sent", { e: email }); $("#formErr").textContent = ""; $("#formOk").textContent = state.forgotOk;
+      // one e-mail per minute (Supabase rate limit): count down on the button
+      let left = 60; btn.textContent = t("verify_wait", { n: left });
+      const timer = setInterval(() => {
+        left -= 1; const b = $("#forgotBtn");
+        if (!b) return clearInterval(timer);
+        if (left <= 0) { clearInterval(timer); b.disabled = false; b.textContent = t("forgot_send"); }
+        else b.textContent = t("verify_wait", { n: left });
+      }, 1000);
+    } catch (err) { btn.disabled = false; state.forgotErr = err.message; $("#formErr").textContent = err.message; }
+  }
+  async function onNewPassword(e) {
+    e.preventDefault();
+    const f = new FormData(e.target), btn = e.target.querySelector("[type=submit]");
+    const pw = String(f.get("password") || ""), pw2 = String(f.get("password2") || "");
+    if (pw !== pw2) { $("#formErr").textContent = t("err_pw_match"); return; }
+    btn.disabled = true;
+    try {
+      await state.store.updatePassword(pw);
+      setRecovery(false); toast(t("newpw_done")); render();
+    } catch (err) { btn.disabled = false; $("#formErr").textContent = err.message; }
   }
   async function onSaveProfile(e) {
     e.preventDefault();
@@ -752,17 +1002,28 @@
       <div class="seg" role="radiogroup" aria-labelledby="ciLabel">${[1, 2, 3].map(h => `<button type="button" role="radio" aria-checked="${h === hours}" data-h="${h}">${esc(t("hours_short", { h }))}</button>`).join("")}</div>
       <label class="check"><input type="checkbox" id="ciOutlet" ${space.free_outlets > 0 ? "checked" : "disabled"}> ${esc(t("ci_outlet"))}${space.free_outlets > 0 ? "" : esc(t("ci_none_free"))}</label>
       ${other ? `<p class="hint" style="margin:-8px 0 16px">${esc(t("ci_ends_other", { n: other }))}</p>` : ""}
-      <p class="hint" style="margin:-8px 0 18px">${esc(t("ci_auto"))}</p>
+      <p class="hint ci-end" id="ciEnd" style="margin:-8px 0 12px"></p>
+      <p class="hint" style="margin:0 0 18px">${esc(t("ci_auto"))}</p>
       <div class="form-actions" style="margin-top:0"><button class="btn secondary" data-dismiss>${esc(t("cancel"))}</button><button class="btn primary" id="ciGo">${esc(t("ci_start"))}</button></div>`,
     (m, close) => {
+      // A check-in ends at closing time at the latest (the database does the same)
+      const showEnd = () => {
+        const c = closingTime(space), end = Date.now() + hours * HOUR;
+        $("#ciEnd", m).textContent = c && c < end ? t("ci_until_close", { t: clock(c) }) : t("ci_until", { t: clock(end) });
+      };
+      showEnd();
       m.querySelectorAll("[data-h]").forEach(b => b.addEventListener("click", () => {
         hours = Number(b.dataset.h); m.querySelectorAll("[data-h]").forEach(x => x.setAttribute("aria-checked", String(x === b)));
+        showEnd();
       }));
       $("#ciGo", m).addEventListener("click", async (e) => {
         e.target.disabled = true;
+        // for the reminder 10 minutes before the end (asked once, after a click)
+        if ("Notification" in window && Notification.permission === "default") { try { Notification.requestPermission(); } catch (x) {} }
         try {
           state.active = await state.store.checkIn(state.session.user.id, space.id, hours, $("#ciOutlet", m).checked);
-          close(); toast(t("ci_done", { n: space.name, h: hours }));
+          const until = Date.parse(state.active.expires_at);
+          close(); toast(until < Date.now() + hours * HOUR - 2 * MIN ? t("ci_done_close", { n: space.name, t: clock(until) }) : t("ci_done", { n: space.name, h: hours }));
           await refresh();
         } catch (err) { e.target.disabled = false; fail(err); }
       });
@@ -786,6 +1047,42 @@
       toast(t("left"));
       await refresh();
     } catch (e) { fail(e); }
+  }
+
+  async function extend(btn) {
+    if (!state.active) return;
+    if (btn) btn.disabled = true;
+    try {
+      const until = await state.store.extendCheckIn(state.active.id);
+      state.active = { ...state.active, expires_at: until };
+      toast(t("ext_done", { t: clock(Date.parse(until)) }));
+      await refresh();
+    } catch (e) { if (btn) btn.disabled = false; fail(e); }
+  }
+
+  function openReport(space) {
+    if (!state.session) return;
+    let kind = null;
+    const kinds = [["full", "rep_full_l"], ["empty", "rep_empty_l"], ["closed", "rep_closed_l"]];
+    openModal(`<h2>${esc(t("rep_title", { n: space.name }))}</h2>
+      <p class="lead">${esc(t("rep_lead", { f: approx(space) + space.free_seats, c: space.seat_capacity }))}</p>
+      <div id="repLabel" class="label">${esc(t("rep_q"))}</div>
+      <div class="seg seg-col" role="radiogroup" aria-labelledby="repLabel">${kinds.map(([k, l]) => `<button type="button" role="radio" aria-checked="false" data-k="${k}">${esc(t(l))}</button>`).join("")}</div>
+      <p class="hint" style="margin:-4px 0 18px">${esc(t("rep_hint"))}</p>
+      <p class="form-error" id="repErr" role="alert"></p>
+      <div class="form-actions" style="margin-top:0"><button class="btn secondary" data-dismiss>${esc(t("cancel"))}</button><button class="btn primary" id="repGo">${esc(t("rep_send"))}</button></div>`,
+    (m, close) => {
+      m.querySelectorAll("[data-k]").forEach(b => b.addEventListener("click", () => {
+        kind = b.dataset.k; m.querySelectorAll("[data-k]").forEach(x => x.setAttribute("aria-checked", String(x === b)));
+        $("#repErr", m).textContent = "";
+      }));
+      $("#repGo", m).addEventListener("click", async (e) => {
+        if (!kind) { $("#repErr", m).textContent = t("rep_pick"); return; }
+        e.target.disabled = true;
+        try { await state.store.reportCount(space.id, kind, space.free_seats); close(); toast(t("rep_done")); }
+        catch (err) { e.target.disabled = false; $("#repErr", m).textContent = err.message; }
+      });
+    });
   }
 
   function openEdit(space) {
@@ -854,11 +1151,36 @@
     openModal(`<h2>${esc(t("qr_title", { n: space.name }))}</h2>
       <p class="lead">${esc(t("qr_lead"))}</p>
       <div class="qr" id="qrBox"></div><p class="qr-url">${esc(url)}</p>
-      <div class="form-actions"><button class="btn secondary" data-dismiss>${esc(t("close"))}</button><button class="btn primary" data-act="print">${esc(t("print"))}</button></div>`);
+      <p class="hint" style="margin:0 0 4px">${esc(t("poster_hint"))}</p>
+      <div class="form-actions"><button class="btn secondary" data-dismiss>${esc(t("close"))}</button><button class="btn primary" id="posterBtn" disabled>${esc(t("poster_print"))}</button></div>`);
     try {
       await loadScriptOnce("https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js");
       new window.QRCode($("#qrBox"), { text: url, width: 220, height: 220 });
+      const b = $("#posterBtn"); if (b) { b.disabled = false; b.addEventListener("click", () => printPoster(space, url)); }
     } catch (e) { $("#qrBox").textContent = t("qr_fail"); }
+  }
+  // A4 poster for the zone: big QR code and a short text in Kazakh, Russian and English
+  // (a poster on the wall is read by everyone, whatever language the admin uses).
+  function printPoster(space, url) {
+    const holder = document.createElement("div");
+    new window.QRCode(holder, { text: url, width: 640, height: 640, correctLevel: window.QRCode.CorrectLevel ? window.QRCode.CorrectLevel.M : undefined });
+    const cv = holder.querySelector("canvas"), im = holder.querySelector("img");
+    const src = cv ? cv.toDataURL("image/png") : im ? im.src : "";
+    const where = [space.building, space.floor].filter(Boolean).join(" · ");
+    const L = (k) => ["kk", "ru", "en"].map(l => `<p lang="${l}">${esc(window.I18N.tIn(l, k))}</p>`).join("");
+    const old = $("#poster"); if (old) old.remove();
+    const el = document.createElement("section"); el.id = "poster"; el.setAttribute("aria-hidden", "true");
+    el.innerHTML = `<div class="p-logo">Oryn<span>Tap</span></div>
+      <h1>${esc(space.name)}</h1>${where ? `<p class="p-where">${esc(where)}</p>` : ""}
+      <div class="p-scan">${L("poster_scan")}</div>
+      <img class="p-qr" src="${src}" alt="">
+      <div class="p-steps">${L("poster_leave")}</div>
+      <div class="p-rule">${L("poster_rule")}</div>
+      <p class="p-url">${esc(url)}</p>`;
+    document.body.appendChild(el); document.body.classList.add("print-poster");
+    const done = () => { document.body.classList.remove("print-poster"); el.remove(); removeEventListener("afterprint", done); };
+    addEventListener("afterprint", done);
+    setTimeout(() => window.print(), 50);   // let the QR image decode first
   }
 
   function togglePomodoro() {
@@ -890,6 +1212,11 @@
       case "fav": toggleFav(id); break;
       case "checkin": if (space) openCheckIn(space); break;
       case "leave": leave(); break;
+      case "extend": extend(a); break;
+      case "watch": if (space) toggleWatch(space); break;
+      case "report": if (space) openReport(space); break;
+      case "sort-best": state.sortBest = !state.sortBest; LS.set("oryntap.sortBest", state.sortBest); render(); break;
+      case "newpw-later": setRecovery(false); render(); break;
       case "edit": if (space) openEdit(space); break;
       case "qr": if (space) openQR(space); break;
       case "pomodoro": togglePomodoro(); break;
@@ -898,12 +1225,15 @@
       case "howto-hide": LS.set("oryntap.howto.hidden", true); render(); break;
       case "map-mode": state.mapMode = a.dataset.mode; render(); break;
       case "clear-filters": state.filters.clear(); LS.set("oryntap.filters", []); render(); break;
-      case "auth-mode": state.authMode = a.dataset.mode; render(); break;
-      case "print": window.print(); break;
+      case "auth-mode":
+        if (a.dataset.mode === "forgot") { state.forgotOk = ""; state.forgotErr = ""; state.drafts.forgot = { email: (state.drafts.login || {}).email || "" }; }
+        state.authMode = a.dataset.mode; render(); break;
+      case "verify-login": state.verifyMsg = ""; state.drafts.login = { ...(state.drafts.login || {}), email: (state.verify || {}).email || "" }; state.authMode = "login"; render(); break;
+      case "verify-change": state.verifyMsg = ""; setVerify(null); state.authMode = "signup"; render(); break;
       case "edit-profile": delete state.drafts.profile; state.editing = true; render(); break;
       case "cancel-edit": delete state.drafts.profile; state.editing = false; render(); break;
       case "logout":
-        state.store.signOut().then(() => { state.drafts = {}; AFTER_KEYS.forEach(k => sessionStorage.removeItem(k)); state.session = null; state.active = null; state.favs = new Set(); state.pomodoro = null; toast(t("logged_out")); location.hash = "#/home"; refresh(); });
+        state.store.signOut().then(() => { state.drafts = {}; AFTER_KEYS.forEach(k => sessionStorage.removeItem(k)); state.session = null; state.active = null; state.favs = new Set(); state.pomodoro = null; setRecovery(false); toast(t("logged_out")); location.hash = "#/home"; refresh(); });
         break;
       case "goto": location.hash = "#/home"; setTimeout(() => { const el = document.getElementById("space-" + id); if (el) el.scrollIntoView({ behavior: "smooth", block: "center" }); }, 60); break;
     }
@@ -911,6 +1241,9 @@
 
   // ---------------- router ----------------
   async function route() {
+    // The Supabase library removes the token from the address after an e-mail link, which fires
+    // hashchange while the app is still starting; boot() calls route() itself when it is ready.
+    if (!state.store || !state.unis.length) return;
     $("#modalRoot").innerHTML = "";
     const parts = location.hash.replace(/^#\/?/, "").split("/");
     let r = parts[0] || "home";
@@ -946,6 +1279,17 @@
       el.textContent = fmtLeft(left);
       if (left <= 0 && state.active) { state.active = null; notify(t("checkin_ended")); refresh(); }
     });
+    // Reminder 10 minutes before a check-in ends (once per end time, also after a reload)
+    const a = state.active;
+    if (a) {
+      const left = Date.parse(a.expires_at) - Date.now(), key = a.id + "@" + a.expires_at;
+      if (left > 0 && left <= 10 * MIN && LS.get("oryntap.reminded", null) !== key) {
+        LS.set("oryntap.reminded", key);
+        const sp = state.spaces.find(x => x.id === a.space_id) || state.favSpaces.find(x => x.id === a.space_id) || state.activeSpace;
+        if (!$("#view form[data-keep]")) render();   // shows the note and the Extend button in the banner
+        notify(t("remind_end", { n: sp ? sp.name : t("your_space"), m: Math.max(1, Math.ceil(left / MIN)) }));
+      }
+    }
     const p = state.pomodoro;
     if (p) {
       const left = p.until - Date.now();

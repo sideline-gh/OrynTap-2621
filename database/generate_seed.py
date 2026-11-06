@@ -45,22 +45,24 @@ SPACES = [
          seats=250, outlets=270, quiet=True, group=False, food=False,
          # from the sign on the library door
          hours=week("09:00", "22:00", sat=("09:00", "17:00"), sun=("10:00", "15:00")),
-         image="assets/img/aitu-library-460.webp",
-         alt="Library hall with lime-green booth sofas, long tables and tall white bookshelves", map=(11, 68)),
+         image="assets/img/aitu-library-480.webp",
+         alt="Library reading area with rows of grey desk booths, green carpet and a slatted wooden ceiling", map=(11, 68)),
     dict(uni="AITU", name="Open Space", kind="atrium", building="Block C1.2 · Atrium", floor="1st floor",
          desc="Bright atrium under the glass roof with modular sofas. Good for group work between classes.",
          seats=70, outlets=55, quiet=False, group=True, food=True,
-         hours=daily("08:00", "23:00"), image="assets/img/aitu-open-space-460.webp",
-         alt="Students sitting on green modular sofas in a bright atrium under a glass roof", map=(50, 61)),
+         hours=daily("08:00", "23:00"), image="assets/img/aitu-open-space-480.webp",
+         alt="Wide open atrium with a grey carpet, glass walls and green sofas along the far side", map=(50, 61)),
     dict(uni="AITU", name="Coworking", kind="coworking", building="Block C1.2", floor="1st floor",
          desc="Large coworking zone with shared desks, sofas and whiteboards next to the atrium.",
          seats=180, outlets=25, quiet=False, group=True, food=False,
          hours=week("08:00", "22:00", sat=("09:00", "20:00")),
-         image=None, map=(50, 23)),
+         image="assets/img/aitu-coworking-480.webp",
+         alt="Coworking area with a long table and grey chairs, sofas and swing seats by the windows", map=(50, 23)),
     dict(uni="AITU", name="Coffeelake", kind="cafe", building="Block C1", floor="1st floor",
          desc="Campus coffee shop. Seat and outlet numbers were counted exactly by our team.",
          seats=45, outlets=11, quiet=False, group=True, food=True, exact=True,
-         hours=week("08:00", "20:00", sat=("09:00", "18:00")), image=None, map=None),
+         hours=week("08:00", "20:00", sat=("09:00", "18:00")), image="assets/img/aitu-coffeelake-480.webp",
+         alt="Coffeelake counter with pastries, and white chairs at tables beside a green plant wall", map=None),
 
     # ---- Nazarbayev University (library rooms are open 24/7)
     dict(uni="NU", name="Library · Astana Room", kind="library", building="NU Library", floor=None,
@@ -127,6 +129,25 @@ SPACES = [
          desc="Coworking zones of the new 2,656-place Student House, made for team-based work.",
          seats=100, outlets=80, quiet=False, group=True, food=True,
          hours=daily("08:00", "23:00"), image=None),
+
+    # ---- AITU, added 3 Nov 2026 (photos by our team). Seats are rough counts; outlets not counted yet
+    # (0 until an admin edits them); weekend hours not confirmed, so only Mon–Fri 09:00–20:00 is entered.
+    # new=True: no generated history, so the 640 test check-ins used in our reports stay identical.
+    dict(uni="AITU", name="Mokko", kind="cafe", building="Between Blocks C2 and C3, opposite the wardrobe", floor=None,
+         desc="University coffee shop. Seat count is approximate; outlets and weekend hours are not confirmed yet.",
+         seats=10, outlets=0, quiet=False, group=True, food=True, new=True,
+         hours=week("09:00", "20:00"), image="assets/img/aitu-mokko-480.webp",
+         alt="Mokko coffee kiosk in a glass-walled passage, with round tables and wooden armchairs", map=None),
+    dict(uni="AITU", name="Sheker", kind="cafe", building="Between Blocks C1 and C2, opposite the wardrobe", floor=None,
+         desc="Coffee shop. Seat count is approximate; outlets and weekend hours are not confirmed yet.",
+         seats=10, outlets=0, quiet=False, group=True, food=True, new=True,
+         hours=week("09:00", "20:00"), image="assets/img/aitu-sheker-480.webp",
+         alt="Sheker coffee kiosk with square tables and grey chairs under string lights", map=None),
+    dict(uni="AITU", name="Canteen", kind="cafe", building="Block C1.3", floor="Dining hall",
+         desc="University dining hall. At least 100 seats (approximate); outlets and weekend hours are not confirmed yet.",
+         seats=100, outlets=0, quiet=False, group=True, food=True, new=True,
+         hours=week("09:00", "20:00"), image="assets/img/aitu-canteen-480.webp",
+         alt="Large canteen hall with long tables, yellow benches and round ceiling lamps by tall windows", map=(84, 74)),
 ]
 
 FIRST = ["Aruzhan", "Alikhan", "Dana", "Nursultan", "Aigerim", "Dias", "Amina", "Yerlan", "Madina", "Temirlan",
@@ -269,7 +290,8 @@ w("CREATE FUNCTION pg_temp.ts(days_ago int, hhmm text) RETURNS timestamptz LANGU
 HOUR_W = {8: 3, 9: 6, 10: 9, 11: 12, 12: 12, 13: 13, 14: 14, 15: 13, 16: 12, 17: 10, 18: 8, 19: 6, 20: 4, 21: 2}
 hrs, wts = zip(*HOUR_W.items())
 spaces_by_uni = {}
-for s in SPACES: spaces_by_uni.setdefault(s["uni"], []).append(s)
+for s in SPACES:
+    if not s.get("new"): spaces_by_uni.setdefault(s["uni"], []).append(s)   # new places: no generated history
 students = [x for x in USERS if x["role"] == "student"]
 used_days = set()
 hist = []

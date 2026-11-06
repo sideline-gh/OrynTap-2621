@@ -61,9 +61,9 @@ window.ORYNTAP_DEMO = {
    "building": "Block C1.1",
    "floor": "1st floor",
    "description": "Main university library with soft booths, long tables and bookshelves. Silence zone. library@astanait.edu.kz",
-   "image_url": "assets/img/aitu-library-460.webp",
+   "image_url": "assets/img/aitu-library-480.webp",
    "image_credit": null,
-   "image_alt": "Library hall with lime-green booth sofas, long tables and tall white bookshelves",
+   "image_alt": "Library reading area with rows of grey desk booths, green carpet and a slatted wooden ceiling",
    "seat_capacity": 250,
    "outlet_capacity": 270,
    "counts_exact": false,
@@ -119,9 +119,9 @@ window.ORYNTAP_DEMO = {
    "building": "Block C1.2 · Atrium",
    "floor": "1st floor",
    "description": "Bright atrium under the glass roof with modular sofas. Good for group work between classes.",
-   "image_url": "assets/img/aitu-open-space-460.webp",
+   "image_url": "assets/img/aitu-open-space-480.webp",
    "image_credit": null,
-   "image_alt": "Students sitting on green modular sofas in a bright atrium under a glass roof",
+   "image_alt": "Wide open atrium with a grey carpet, glass walls and green sofas along the far side",
    "seat_capacity": 70,
    "outlet_capacity": 55,
    "counts_exact": false,
@@ -177,9 +177,9 @@ window.ORYNTAP_DEMO = {
    "building": "Block C1.2",
    "floor": "1st floor",
    "description": "Large coworking zone with shared desks, sofas and whiteboards next to the atrium.",
-   "image_url": "assets/img/cover-03-coworking.svg",
+   "image_url": "assets/img/aitu-coworking-480.webp",
    "image_credit": null,
-   "image_alt": null,
+   "image_alt": "Coworking area with a long table and grey chairs, sofas and swing seats by the windows",
    "seat_capacity": 180,
    "outlet_capacity": 25,
    "counts_exact": false,
@@ -230,9 +230,9 @@ window.ORYNTAP_DEMO = {
    "building": "Block C1",
    "floor": "1st floor",
    "description": "Campus coffee shop. Seat and outlet numbers were counted exactly by our team.",
-   "image_url": "assets/img/cover-04-cafe.svg",
+   "image_url": "assets/img/aitu-coffeelake-480.webp",
    "image_credit": null,
-   "image_alt": null,
+   "image_alt": "Coffeelake counter with pastries, and white chairs at tables beside a green plant wall",
    "seat_capacity": 45,
    "outlet_capacity": 11,
    "counts_exact": true,
@@ -1038,6 +1038,150 @@ window.ORYNTAP_DEMO = {
      "weekday": 7,
      "opens": "08:00",
      "closes": "23:00"
+    }
+   ]
+  },
+  {
+   "id": 19,
+   "university_id": 1,
+   "university_code": "AITU",
+   "name": "Mokko",
+   "kind": "cafe",
+   "building": "Between Blocks C2 and C3, opposite the wardrobe",
+   "floor": null,
+   "description": "University coffee shop. Seat count is approximate; outlets and weekend hours are not confirmed yet.",
+   "image_url": "assets/img/aitu-mokko-480.webp",
+   "image_credit": null,
+   "image_alt": "Mokko coffee kiosk in a glass-walled passage, with round tables and wooden armchairs",
+   "seat_capacity": 10,
+   "outlet_capacity": 0,
+   "counts_exact": false,
+   "is_quiet": false,
+   "group_work": true,
+   "food_allowed": true,
+   "map_x": null,
+   "map_y": null,
+   "hours": [
+    {
+     "weekday": 1,
+     "opens": "09:00",
+     "closes": "20:00"
+    },
+    {
+     "weekday": 2,
+     "opens": "09:00",
+     "closes": "20:00"
+    },
+    {
+     "weekday": 3,
+     "opens": "09:00",
+     "closes": "20:00"
+    },
+    {
+     "weekday": 4,
+     "opens": "09:00",
+     "closes": "20:00"
+    },
+    {
+     "weekday": 5,
+     "opens": "09:00",
+     "closes": "20:00"
+    }
+   ]
+  },
+  {
+   "id": 20,
+   "university_id": 1,
+   "university_code": "AITU",
+   "name": "Sheker",
+   "kind": "cafe",
+   "building": "Between Blocks C1 and C2, opposite the wardrobe",
+   "floor": null,
+   "description": "Coffee shop. Seat count is approximate; outlets and weekend hours are not confirmed yet.",
+   "image_url": "assets/img/aitu-sheker-480.webp",
+   "image_credit": null,
+   "image_alt": "Sheker coffee kiosk with square tables and grey chairs under string lights",
+   "seat_capacity": 10,
+   "outlet_capacity": 0,
+   "counts_exact": false,
+   "is_quiet": false,
+   "group_work": true,
+   "food_allowed": true,
+   "map_x": null,
+   "map_y": null,
+   "hours": [
+    {
+     "weekday": 1,
+     "opens": "09:00",
+     "closes": "20:00"
+    },
+    {
+     "weekday": 2,
+     "opens": "09:00",
+     "closes": "20:00"
+    },
+    {
+     "weekday": 3,
+     "opens": "09:00",
+     "closes": "20:00"
+    },
+    {
+     "weekday": 4,
+     "opens": "09:00",
+     "closes": "20:00"
+    },
+    {
+     "weekday": 5,
+     "opens": "09:00",
+     "closes": "20:00"
+    }
+   ]
+  },
+  {
+   "id": 21,
+   "university_id": 1,
+   "university_code": "AITU",
+   "name": "Canteen",
+   "kind": "cafe",
+   "building": "Block C1.3",
+   "floor": "Dining hall",
+   "description": "University dining hall. At least 100 seats (approximate); outlets and weekend hours are not confirmed yet.",
+   "image_url": "assets/img/aitu-canteen-480.webp",
+   "image_credit": null,
+   "image_alt": "Large canteen hall with long tables, yellow benches and round ceiling lamps by tall windows",
+   "seat_capacity": 100,
+   "outlet_capacity": 0,
+   "counts_exact": false,
+   "is_quiet": false,
+   "group_work": true,
+   "food_allowed": true,
+   "map_x": 84,
+   "map_y": 74,
+   "hours": [
+    {
+     "weekday": 1,
+     "opens": "09:00",
+     "closes": "20:00"
+    },
+    {
+     "weekday": 2,
+     "opens": "09:00",
+     "closes": "20:00"
+    },
+    {
+     "weekday": 3,
+     "opens": "09:00",
+     "closes": "20:00"
+    },
+    {
+     "weekday": 4,
+     "opens": "09:00",
+     "closes": "20:00"
+    },
+    {
+     "weekday": 5,
+     "opens": "09:00",
+     "closes": "20:00"
     }
    ]
   }

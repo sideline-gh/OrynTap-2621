@@ -575,3 +575,57 @@ img { display: block; max-width: 100%; }
   .occ-stats .num { font-size: 17px; }
   .occ-stats .num small { display: block; font-size: 11.5px; }
 }
+
+/* =====================================================================
+   4 Nov 2026: approved improvements (same colours, sizes and components)
+   ===================================================================== */
+/* Check-in ends in 10 minutes: the banner turns amber and says what to do */
+.session.ending { border-color: var(--warn); }
+.session .ending-note { margin: 6px 0 0; font-size: 13.5px; color: var(--text); font-weight: 500; }
+/* "Best right now" is an order, not a filter: a thin line separates it from the filters */
+.chip-sep { width: 1px; align-self: stretch; margin: 4px 2px; background: var(--line); flex: none; }
+.sort-note { margin: -8px 0 14px; font-size: 13px; color: var(--muted); }
+/* Usually busy (past check-ins), folded under the facts of a card */
+/* sits next to the tags, so a card keeps its height; opened, the chart takes the full width */
+.facts-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 0 0 10px; }
+.facts-row .tags { margin: 0; }
+.busy { font-size: 13px; color: var(--muted); }
+.busy[open] { flex-basis: 100%; }
+.busy summary { cursor: pointer; width: fit-content; list-style-position: inside; }
+.busy summary .hot { color: var(--warn); font-weight: 600; }
+.busy .bars { height: 46px; margin: 8px 0 3px; max-width: 390px; }
+.busy .bars span { opacity: .35; }
+.busy .bars span.pk { opacity: .9; }
+.busy .bar-labels { max-width: 390px; }
+.busy .busy-src { margin: 4px 0 0; font-size: 12px; max-width: 390px; }
+/* Card extras */
+.card .card-actions .btn svg.ico { width: 16px; height: 16px; margin-right: 6px; vertical-align: -3px; }
+.card .card-actions .rep-btn { font-size: 13px; margin-left: auto; align-self: center; }
+.seg.seg-col { grid-template-columns: 1fr; }
+.seg.seg-col button { text-align: left; padding: 0 14px; }
+.form-ok { color: var(--ok); font-size: 13.5px; margin: 0 0 10px; }
+.form-ok:empty { display: none; }
+.auth-alt.forgot-alt { margin-top: 12px; }
+@media (max-width: 720px) {
+  .card .card-actions .rep-btn { flex: none; margin: 4px auto 0 0; height: auto; }
+  .busy .bars, .busy .bar-labels, .busy .busy-src { max-width: none; }
+}
+
+/* QR poster (admin): built only when printing, A4 portrait */
+#poster { display: none; }
+@media print {
+  @page { size: A4 portrait; margin: 14mm; }
+  body.print-poster > *:not(#poster) { display: none !important; }
+  body.print-poster { background: #fff !important; }
+  body.print-poster #poster { display: block; color: #111; text-align: center; font-family: inherit; }
+  #poster .p-logo { font-size: 26pt; font-weight: 700; letter-spacing: -.5px; }
+  #poster .p-logo span { color: #0a6fd6; }
+  #poster h1 { font-size: 34pt; margin: 6mm 0 1mm; line-height: 1.1; }
+  #poster .p-where { font-size: 13pt; color: #444; margin: 0 0 5mm; }
+  #poster .p-scan p { font-size: 20pt; font-weight: 700; margin: 1.5mm 0; }
+  #poster .p-qr { display: block; width: 105mm; height: 105mm; margin: 5mm auto; image-rendering: pixelated; }
+  #poster .p-steps p { font-size: 14pt; margin: 1.2mm 0; }
+  #poster .p-rule { margin-top: 5mm; }
+  #poster .p-rule p { font-size: 11.5pt; color: #333; margin: 1mm 0; }
+  #poster .p-url { font-size: 9pt; color: #555; margin-top: 6mm; word-break: break-all; }
+}

@@ -85,7 +85,7 @@ All paths are relative and routing uses `#/…`, so nothing else is needed. The 
 
 **Check-in rule:** a student can only check in at spaces of their own university (RLS policy `check_ins_own_insert`). Other universities can still be browsed.
 
-**Database created before 14 Oct 2026?** Run `database/05_update_2026-10-14.sql` once in the SQL Editor. It sets the admin e-mails, adds the own-university check-in rule and removes the old seeded `admin@…` accounts, without touching other data. Then run `database/06_update_multimedia.sql` once: it adds the alt-text column and points every space to our own WebP photos or illustrations (Assignment 4). Then run `database/07_stage2.sql` and `database/08_iot_occupancy.sql` once (Project Stage 2: admin statistics and the simulated door sensor), `database/09_photos_verification.sql` (team photos, e-mail verification guard) and `database/10_improvements.sql` (4 Nov 2026: check-in ends at closing time, Extend 1 h, “usually busy” hints, “Wrong number?” reports, Mokko/Sheker location fix, new Open Space photo). A fresh install runs 01, 02, 07, 08, 09 and 10.
+**Database created before 14 Oct 2026?** Run `database/05_update_2026-10-14.sql` once in the SQL Editor. It sets the admin e-mails, adds the own-university check-in rule and removes the old seeded `admin@…` accounts, without touching other data. Then run `database/06_update_multimedia.sql` once: it adds the alt-text column and points every space to our own WebP photos or illustrations (Assignment 4). Then run `database/07_stage2.sql` and `database/08_iot_occupancy.sql` once (Project Stage 2: admin statistics and the simulated door sensor), `database/09_photos_verification.sql` (team photos, e-mail verification guard) and `database/10_improvements.sql` (4 Nov 2026: check-in ends at closing time, Extend 1 h, “usually busy” hints, “Wrong number?” reports, Mokko/Sheker location fix, new Open Space photo). Optionally run `database/11_test_history_aitu.sql` last (6 Nov 2026: generated test history for the admin statistics, see below). A fresh install runs 01, 02, 07, 08, 09 and 10, and optionally 11.
 
 > The anon key is public by design. Everything it can do is limited by Row-Level Security. **Never** put the `service_role` key in the website.
 
@@ -157,6 +157,8 @@ Backups contain password hashes, so `database/backup/` is git-ignored: keep them
 
 **Statistics for administrators (Part C5).** After `07_stage2.sql`, an admin's Profile shows busiest hours, use per 100 seats and stay length for their own university. A student gets no rows; anonymous visitors cannot call the functions.
 
+**Generated test history for AITU (6 Nov 2026).** `database/11_test_history_aitu.sql` replaces the generated history of the 7 AITU places with 2,449 finished check-ins by the 29 generated AITU test students (never real accounts), so the admin statistics also cover Mokko, Sheker and the Canteen. It is **generated test data, not measured data**: its daily pattern follows what our team sees on campus (busiest 13:00–15:00, a little less in the Library and most in the Canteen; also busy 15:00–17:00, most in the Library and Coworking; cafes quieter before noon and full 13:00–17:00; every place busy most of the day). Check-ins are placed only on days and hours when a place is open, never run past closing time, and live check-ins are not changed. Safe to run again. It is made by `tools/make_test_history.py`, which also updates `js/demo-history.js`. Real numbers come from the pilot.
+
 **Repeat the analysis (Part C2).**
 1. Supabase → SQL Editor → paste one query from `analysis/queries.sql` → Run → *Download CSV* as `q1.csv`, `q2.csv`, `q3.csv`.
 2. `pip install matplotlib` (once), then `python3 analysis/make_charts.py <folder with the CSVs>`.
@@ -186,6 +188,18 @@ In demo mode (empty `js/config.js`) the browser simulates the sensors and the st
 
 Not done: map pins for Mokko and Sheker. The floor plan (and aitumap) shows only Block C1; a plan of the C1–C2–C3 passages is needed to place them.
 
+## 6d. Availability (R12)
+
+`.github/workflows/uptime.yml` checks every 30 minutes that the website and the database API answer (public key only). Each run stays in the repository's **Actions → Uptime check** list: green = up, red = down. Availability for a period = green runs ÷ all runs. With the GitHub CLI: `gh run list --workflow uptime.yml --limit 1000 --json conclusion --jq 'map(.conclusion) | group_by(.) | map({(.[0]): length}) | add'`. GitHub may delay scheduled runs by a few minutes; that does not count as downtime.
+
+## 6e. Test accounts
+
+| Role | Account | Password |
+|---|---|---|
+| Student (live site) | `248481@astanait.edu.kz` (generated test student, confirmed) | `Student2026!` |
+| Administrator (live site) | created by the team for the defense; given to the instructor in person | – |
+| Any role (demo mode, empty `js/config.js`) | any university e-mail; the three team e-mails become admins | any, 8+ characters |
+
 ## 7. Project structure
 
 ```
@@ -211,9 +225,10 @@ iot/sensor_sim.py          Part D: simulated door counter, 2 ToF sensors (Python
 iot/test_sensor_sim.py     tests of the counting logic
 iot/.env.example           settings template (copy to iot/.env, never commit .env)
 iot/README.md              how to set up and run the simulation
-js/demo-history.js         generated: 640 finished check-ins for the demo-mode statistics
+js/demo-history.js         generated check-ins for the demo-mode statistics (AITU part: tools/make_test_history.py)
 tools/optimise_images.py   original photo -> sized WebP files
 tools/make_chime.py        synthesises the Pomodoro chime
+tools/make_test_history.py generated AITU test history -> database/11_test_history_aitu.sql
 media-src/                 original photos and sound (not loaded by the site)
 assets/media/              how-to video, captions, poster, chime
 database/backup/           example pg_dump

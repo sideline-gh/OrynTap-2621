@@ -740,6 +740,7 @@
         <h2 class="ins-h">${esc(t("ins_use"))}</h2><p class="muted">${esc(t("ins_use_p"))}</p><div id="insightUse" class="skeleton" style="height:90px"></div>
         <h2 class="ins-h">${esc(t("ins_stay"))}</h2><p class="muted">${esc(t("ins_stay_p"))}</p><div id="insightStay" class="skeleton" style="height:90px"></div>
         <h2 class="ins-h">${esc(t("ins_rep"))}</h2><p class="muted">${esc(t("ins_rep_p"))}</p><div id="insightRep" class="skeleton" style="height:60px"></div>
+        <h2 class="ins-h">${esc(t("ins_cmp"))}</h2><p class="muted">${esc(t("ins_cmp_p"))}</p><div id="insightCmp"></div>
         <p class="muted ins-src">${esc(t("ins_src"))}</p></section>` : ""}`;
   }
 
@@ -781,6 +782,7 @@
         <tbody>${rows.map(r => `<tr><td>${esc(t("hours_short", { h: r.planned_hours }))}</td><td>${r.check_ins}</td><td>${esc(t("ins_min", { m: r.avg_stay_min }))}</td><td>${r.pct_left_early}%</td><td>${r.pct_ended_by_itself}%</td></tr>`).join("")}</tbody></table>`
         : `<p class="muted">${esc(t("no_checkins"))}</p>`;
     } catch (e) { done(s); s.innerHTML = `<p class="muted">${esc(t("insights_fail"))}</p>`; }
+    renderSensorCompare();
     const r = $("#insightRep"); if (!r || !state.store.adminCountReports) return;
     try {
       const rows = await state.store.adminCountReports();
@@ -789,6 +791,22 @@
         <tbody>${rows.map(x => `<tr><td>${esc(x.space_name)}</td><td>${x.full_n}</td><td>${x.empty_n}</td><td>${x.closed_n}</td><td>${esc(agoText(x.last_at))}</td></tr>`).join("")}</tbody></table>`
         : `<p class="muted">${esc(t("ins_rep_none"))}</p>`;
     } catch (e) { done(r); r.innerHTML = `<p class="muted">${esc(t("insights_fail"))}</p>`; }
+  }
+
+  // End-term plan (Part D): the door counter counts everyone, check-ins count only students who
+  // use OrynTap. Comparing the two shows the admin how many people did not check in.
+  function renderSensorCompare() {
+    const el = $("#insightCmp"); if (!el) return;
+    const rows = state.spaces.filter(s => state.sensor && state.sensor[s.id]).map(s => {
+      const r = state.sensor[s.id], inSeats = Math.max(s.seat_capacity - s.free_seats, 0);
+      const gap = r.few ? null : Math.max(r.people_inside - inSeats, 0);
+      return { s, r, inSeats, gap };
+    });
+    if (!rows.length) { el.innerHTML = `<p class="muted">${esc(t("ins_cmp_none"))}</p>`; return; }
+    const counted = rows.filter(x => !x.r.few), door = counted.reduce((a, x) => a + x.r.people_inside, 0), gap = counted.reduce((a, x) => a + x.gap, 0);
+    el.innerHTML = `<table class="stay-table"><thead><tr><th scope="col">${esc(t("ins_rep_place"))}</th><th scope="col">${esc(t("ins_cmp_door"))}</th><th scope="col">${esc(t("ins_cmp_ci"))}</th><th scope="col">${esc(t("ins_cmp_gap"))}</th></tr></thead>
+      <tbody>${rows.map(x => `<tr><td>${esc(x.s.name)}</td><td>${x.r.few ? esc(t("ins_cmp_few")) : x.r.people_inside}</td><td>${x.inSeats}</td><td>${x.gap == null ? "—" : x.gap}</td></tr>`).join("")}</tbody></table>
+      ${door ? `<p class="muted">${esc(t("ins_cmp_sum", { p: Math.round(100 * gap / door) }))}</p>` : ""}`;
   }
 
   function afterRender() {

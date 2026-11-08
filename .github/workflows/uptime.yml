@@ -1,0 +1,26 @@
+# OrynTap · R12 availability monitor (end-term plan, Part A4).
+# Every 30 minutes GitHub checks that the website and the database answer.
+# Each run is kept in the Actions tab: a green run = up, a red run = down.
+# Availability = green runs / all runs (README, section "Availability (R12)").
+name: Uptime check
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Website (GitHub Pages)
+        run: |
+          code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 https://sideline-gh.github.io/OrynTap-2621/)
+          echo "website: HTTP $code"; test "$code" = "200"
+      - name: Database API (Supabase, public key only)
+        run: |
+          code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 \
+            -H "apikey: sb_publishable_qrXjBqJlhlxtUoNoUZNcEQ_vdWU2fC2" \
+            "https://ausnycqeqjydsesppdud.supabase.co/rest/v1/universities?select=id&limit=1")
+          echo "database: HTTP $code"; test "$code" = "200"
